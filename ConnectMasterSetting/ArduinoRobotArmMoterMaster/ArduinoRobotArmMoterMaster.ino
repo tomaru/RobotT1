@@ -4,9 +4,11 @@
 //  1.select [SOFT]
 //  2.compile & download
 
-//#define DEBUG
+#define DEBUG
 //#define DEBUG_SETTING
 
+#include <HardwareSerial.h>
+#include "Event.h"
 #include "EEPROMConfig.h"
 #include "Ring.h"
 extern "C" {
@@ -15,7 +17,7 @@ extern "C" {
 #include <avr/wdt.h> //WatchDogTimer
 
 #include <dxlib.h>
-#include <SoftwareSerial.h>
+//#include <SoftwareSerial.h>
 #include <PS3USB.h>
 //#include <LiquidCrystal.h>
 
@@ -48,6 +50,11 @@ PS3USB PS3(&Usb); // This will just create the instance
 
 bool printAngle;
 uint8_t state = 0;
+
+//############  HardwareSerial   ############
+#define DebugSerial       Serial
+#define MoterSlaveSerial  Serial1
+#define MoterMasterSerial Serial2
 
 //############  MasterSetting   ############
 #define BUFF_MAX 255
@@ -92,11 +99,139 @@ typedef struct ComXYZ_t
   XYZ pos;
 } ComXYZ;
 
-ComXYZ gxyz;
+ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
+
+//############  EventManager   ############
+EventManager evtManager;
+
+struct SettingLisnerTask : public EventTask
+{
+  using EventTask::execute;
+
+  int getSetting()
+  {
+    byte ch;
+    byte rcv;
+    int moter;
+    int OK;
+    int16_t pos;
+    byte bufferSerialSetting[RING_BUF];
+    //UARTから読み込み
+    if (MoterMasterSerial.available()) {
+      ch = MoterMasterSerial.read();
+      OK = inputSerialSetting(ch, bufferSerialSetting, &gindexsetting);
+
+      if ( OK ) {
+        memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
+      } else {
+        ;//        MoterMasterSerial.end();
+      }
+    } else {
+      ;//      MoterMasterSerial.end();
+    } else {
+        DebugSerial.println(" NOT MoterMasterSerial.available");
+    }
+  }
+
+  int inputSerialSetting(byte ch, byte *lbufferSerial, int *inoutindex) {
+    int ii;
+    unsigned short len = 0;
+    byte lCmd[RING_BUF];// 本当は電文の最大長 + alpha を確保する。ので間違いではない
+    int fail = 1;// デフォルトは電文取得に失敗
+
+    // 取得した電文(1byte)をリングバッファに詰める
+    RingWrite(ch);
+    // なんとなく取得した電文数を記録する。多分、全体でみると間違っているのでTODO
+    (*inoutindex)++;
+
+    if ( HEADER_LEN <= RingSize() ) {
+      RingGetCommand(lCmd, HEADER_LEN );
+    }
+
+    // ヘッダ部の読み込み
+    while (RingSize() >= (HEADER_LEN) ) {
+      for ( ii = 0; ii < (sizeof(gComHead) / sizeof(gComHead[0])); ii++ ) {
+        if (gComHead[ii].main == lCmd[0]) {
+          if (gComHead[ii].sub == lCmd[1]) {
+            if (gComHead[ii].ver == lCmd[2]) {
+              len = *((unsigned short*)(&lCmd[3]));
+              //DebugSerial.print("len = "); DebugSerial.println(len);
+              if ( gComHead[ii].len != len ) {
+                len = 0;
+                // レングス不正のため次の位置に更新（2byteのためこことforのあとので次にする）
+                RingReadPosAdd(1);
+                // ヘッダ取得に失敗したことを記録する
+                fail = 1;
+              } else {
+                fail = 0;
+                break;
+              }
+            }
+          }
+        }
+      }
+      if (fail == 0) {
+        // 成功したらwhileを抜ける
+        break;
+      } else {
+        // ヘッダ取得失敗のためリングバッファを1byte次にする
+        RingReadPosAdd(1);
+      }
+    }
+#ifdef DEBUG_SETTING
+    //RingPrint();
+#endif
+
+    //DebugSerial.print("Size = "); DebugSerial.println(RingSize());
+    // 取得に成功しており、かつ、リングバッファがヘッダサイズ+ヘッダに書かれたデータ部のレングス+CRCサイズ以上か
+    if ( fail == 0 && RingSize() >= (HEADER_LEN + len + CRC_SIZE) ) {
+#ifdef DEBUG_SETTING
+      DebugSerial.println("============");
+#endif
+      memset(lCmd, 0x00, RING_BUF);
+      RingGetCommand(lCmd, HEADER_LEN + len + CRC_SIZE  );
+#ifdef DEBUG_SETTING
+      RingPrint2(lCmd, HEADER_LEN + len + CRC_SIZE);//DebugCode
+#endif
+      // 取得したデータからCRC計算
+      unsigned short crc = crc16(0, (unsigned char*)lCmd, HEADER_LEN + len);
+      // 通信で取得したCRC
+      unsigned short settingcrc = *((unsigned short*)(&lCmd[HEADER_LEN + len]));
+#ifdef DEBUG_SETTING
+      DebugSerial.println(crc);
+      DebugSerial.println(settingcrc);
+#endif
+      if ( crc == settingcrc ) {
+        // 電文の取得に成功した
+#ifdef DEBUG_SETTING
+        DebugSerial.println("Success");
+#endif
+        // 次の位置に更新
+        RingReadPosAdd((HEADER_LEN + len + CRC_SIZE));
+        return 1;
+      } else {
+        // 電文の取得に失敗したので
+        // 次の位置に更新
+        RingReadPosAdd(1);
+#ifdef DEBUG_SETTING
+        DebugSerial.println("Fail");
+#endif
+      }
+    }
+END:
+    return 0;
+  }
+
+  void execute(Event evt)
+  {
+    getSetting();
+  }
+} SettingLisnerTask;
+
 //############  DebugCode   ############
 #ifdef DEBUG    //Macros are usually in all capital letters.
-#define DebugSerialPrint(...)    Serial.print(__VA_ARGS__)     //DPRINT is a macro, debug print
-#define DebugSerialPrintln(...)  Serial.println(__VA_ARGS__)   //DPRINTLN is a macro, debug print with new line
+#define DebugSerialPrint(...)    DebugSerial.print(__VA_ARGS__)     //DPRINT is a macro, debug print
+#define DebugSerialPrintln(...)  DebugSerial.println(__VA_ARGS__)   //DPRINTLN is a macro, debug print with new line
 #else
 #define DebugSerialPrint(...)     //now defines a blank line
 #define DebugSerialPrintln(...)   //now defines a blank line
@@ -104,19 +239,30 @@ ComXYZ gxyz;
 
 //############  setup   ############
 void setup() {
-  Serial.begin(115200);// Debug
-  Serial2.begin(115200);// Connect Setting
-  Serial3.begin(115200);// Connect MoterSlave
+  DebugSerial.begin(115200);// Debug
+  MoterSlaveSerial.begin(115200);// Connect MoterSlave
+  MoterMasterSerial.begin(115200);// Connect Setting
+  if (!DebugSerial) {
+    DebugSerial.end();
+  }
+  if (!MoterSlaveSerial) {
+    DebugSerial.println("MoterSlaveSerial.end()");
+    MoterSlaveSerial.end();
+  }
+  if (!MoterMasterSerial) {
+    DebugSerial.println("MoterMasterSerial.end()");
+    MoterMasterSerial.end();
+  }
 
   RingInit();
 
 #ifdef DEBUG
-  Serial.println("=======CONFIG GET RESULT START =======");
-  Serial.println(conf_ram.delta_x);
-  Serial.println(conf_ram.delta_y);
-  Serial.println(conf_ram.delta_z);
-  Serial.println(conf_ram.crc);
-  Serial.println("=======GET RESULT END=======");
+  DebugSerial.println("=======CONFIG GET RESULT START =======");
+  DebugSerial.println(conf_ram.delta_x);
+  DebugSerial.println(conf_ram.delta_y);
+  DebugSerial.println(conf_ram.delta_z);
+  DebugSerial.println(conf_ram.crc);
+  DebugSerial.println("=======GET RESULT END=======");
 #endif
 #ifdef USE_DX
   dxif.begin (57143);
@@ -144,10 +290,27 @@ void setup() {
   }
 #endif
   DebugSerialPrintln("Moter Control Started");
+
+  evtManager.subscribe(Subscriber("event.keepAlive", &SettingLisnerTask));
+  Event keepAlive = Event("event.keepAlive");
+  evtManager.triggerInterval(TimedTask(500, keepAlive));
 }
 
 void loop() {
-  getSetting();
+
+  evtManager.tick();
+
+  if (!DebugSerial) {
+    DebugSerial.end();
+  }
+  if (!MoterSlaveSerial) {
+    DebugSerial.println("MoterSlaveSerial.end()");
+    MoterSlaveSerial.end();
+  }
+  if (!MoterMasterSerial) {
+    DebugSerial.println("MoterMasterSerial.end()");
+    MoterMasterSerial.end();
+  }
 
 #ifdef USE_PS3
   Usb.Task();
@@ -164,9 +327,9 @@ void loop() {
       if ( movex > POS_RANGE1 ) {
         // 1はゼロ除算対策
         // モーターの配置の都合上、-1をかけて反対にする
-        gpos[0] = gpos[0] +  -1*(movex - POS_RANGE1 + 1) / 25 - (gxyz.pos.x - DEF_DELTA);
+        gpos[0] = gpos[0] +  -1 * (movex - POS_RANGE1 + 1) / 25 - (gxyz.pos.x - DEF_DELTA);
       } else {
-        gpos[0] = gpos[0] +  -1*(movex - POS_RANGE1 + 1) / 25 + (gxyz.pos.x - DEF_DELTA);
+        gpos[0] = gpos[0] +  -1 * (movex - POS_RANGE1 + 1) / 25 + (gxyz.pos.x - DEF_DELTA);
       }
       MoveMoter( 0, gMoterID[0], &(gpos[0]));
     }
@@ -277,117 +440,15 @@ int MoveMoter( int index, int moterID, int16_t *movepos)
   unsigned short crc = crc16(0, (unsigned char*)buf, n);
   // この電文形式はすべてASCIIなのでIDEのシリアルモニターで電文を確認できます
   sprintf(buf, "%s%02x%02x", buf, (crc >> 8), (crc & 0xff));
-  Serial3.print(buf);
-  Serial3.print(';');
+  if (MoterSlaveSerial.available()) {
+    MoterSlaveSerial.print(buf);
+    MoterSlaveSerial.print(';');
+  }
 
+  if (DebugSerial.available()) {
+    DebugSerial.print(buf);
+    DebugSerial.print(';');
+  }
   return 1;
-}
-
-int getSetting()
-{
-  byte ch;
-  byte rcv;
-  int moter;
-  int OK;
-  int16_t pos;
-  byte bufferSerialSetting[RING_BUF];
-  //UARTから読み込み
-  if (Serial2.available()) {
-    ch = Serial2.read();
-    OK = inputSerialSetting(ch, bufferSerialSetting, &gindexsetting);
-
-    if ( OK ) {
-      memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
-    }
-  }
-}
-
-int inputSerialSetting(byte ch, byte *lbufferSerial, int *inoutindex) {
-  int ii;
-  unsigned short len = 0;
-  byte lCmd[RING_BUF];// 本当は電文の最大長を確保する
-  int fail = 1;// デフォルトは電文取得に失敗
-
-  // 取得した電文(1byte)をリングバッファに詰める
-  RingWrite(ch);
-  // なんとなく取得した電文数を記録する。多分、全体でみると間違っているのでTODO
-  (*inoutindex)++;
-
-  if ( HEADER_LEN <= RingSize() ) {
-    RingGetCommand(lCmd, HEADER_LEN );
-  }
-
-  // ヘッダ部の読み込み
-  while (RingSize() >= (HEADER_LEN) ) {
-    for ( ii = 0; ii < (sizeof(gComHead) / sizeof(gComHead[0])); ii++ ) {
-      if (gComHead[ii].main == lCmd[0]) {
-        if (gComHead[ii].sub == lCmd[1]) {
-          if (gComHead[ii].ver == lCmd[2]) {
-            len = *((unsigned short*)(&lCmd[3]));
-            //Serial.print("len = "); Serial.println(len);
-            if ( gComHead[ii].len != len ) {
-              len = 0;
-              // レングス不正のため次の位置に更新（2byteのためこことforのあとので次にする）
-              RingReadPosAdd(1);
-              // ヘッダ取得に失敗したことを記録する
-              fail = 1;
-            } else {
-              fail = 0;
-              break;
-            }
-          }
-        }
-      }
-    }
-    if (fail == 0) {
-      // 成功したらwhileを抜ける
-      break;
-    } else {
-      // ヘッダ取得失敗のためリングバッファを1byte次にする
-      RingReadPosAdd(1);
-    }
-  }
-#ifdef DEBUG_SETTING
-  //RingPrint();
-#endif
-
-  //Serial.print("Size = "); Serial.println(RingSize());
-  // 取得に成功しており、かつ、リングバッファがヘッダサイズ+ヘッダに書かれたデータ部のレングス+CRCサイズ以上か
-  if ( fail == 0 && RingSize() >= (HEADER_LEN + len + CRC_SIZE) ) {
-#ifdef DEBUG_SETTING
-    Serial.println("============");
-#endif
-    memset(lCmd, 0x00, RING_BUF);
-    RingGetCommand(lCmd, HEADER_LEN + len + CRC_SIZE  );
-#ifdef DEBUG_SETTING
-    RingPrint2(lCmd, HEADER_LEN + len + CRC_SIZE);//DebugCode
-#endif
-    // 取得したデータからCRC計算
-    unsigned short crc = crc16(0, (unsigned char*)lCmd, HEADER_LEN + len);
-    // 通信で取得したCRC
-    unsigned short settingcrc = *((unsigned short*)(&lCmd[HEADER_LEN + len]));
-#ifdef DEBUG_SETTING
-    Serial.println(crc);
-    Serial.println(settingcrc);
-#endif
-    if ( crc == settingcrc ) {
-      // 電文の取得に成功した
-#ifdef DEBUG_SETTING
-      Serial.println("Success");
-#endif
-      // 次の位置に更新
-      RingReadPosAdd((HEADER_LEN + len + CRC_SIZE));
-      return 1;
-    } else {
-      // 電文の取得に失敗したので
-      // 次の位置に更新
-      RingReadPosAdd(1);
-#ifdef DEBUG_SETTING
-      Serial.println("Fail");
-#endif
-    }
-  }
-END:
-  return 0;
 }
 
