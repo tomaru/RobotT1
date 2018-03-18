@@ -3,6 +3,26 @@
 //  Since software serial is selected, dynamixel should be use at 57600bps or less.
 //  1.select [SOFT]
 //  2.compile & download
+//#define DEBUG_COMMAND
+//#define DEBUG
+//#define DEBUG_SETTING
+
+//############  HardwareSerial   ############
+#define DebugSerial       Serial1
+#define MoterPOSSerial  Serial
+#define MoterPOSSerialEvent serialEvent
+
+#ifdef DEBUG    //Macros are usually in all capital letters.
+#define DebugSerialPrint(...)    Serial.print(__VA_ARGS__)     //DPRINT is a macro, debug print
+#define DebugSerialPrintln(...)  Serial.println(__VA_ARGS__)   //DPRINTLN is a macro, debug print with new line
+#else
+#define DebugSerialPrint(...)     //now defines a blank line
+#define DebugSerialPrintln(...)   //now defines a blank line
+#endif
+
+
+#include "Ring.h"
+#include "Command.h"
 extern "C" {
 #include "CalcCRC.h"
 }
@@ -23,30 +43,95 @@ static int16_t defMinPos[MOTER_NUM] = { 100, 200, 50  };
 
 DXLIB dxif (true); // select software serial
 
-#define DEBUG
+//############  MoterMasterCommand   ############
+#define CMD_NUM 1
 
-#ifdef DEBUG    //Macros are usually in all capital letters.
-#define DebugSerialPrint(...)    Serial.print(__VA_ARGS__)     //DPRINT is a macro, debug print
-#define DebugSerialPrintln(...)  Serial.println(__VA_ARGS__)   //DPRINTLN is a macro, debug print with new line
-#else
-#define DebugSerialPrint(...)     //now defines a blank line
-#define DebugSerialPrintln(...)   //now defines a blank line
+typedef struct Moter_t
+{
+  byte moterID;
+  int16_t pos;
+} MoterPOS;
+
+typedef struct ComPOS_t
+{
+  CommandHead head;
+  MoterPOS moter;
+} ComPOS;
+
+CommandHead gComHead[CMD_NUM] = {
+  //  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
+  { 0x02, 0x01, 0x01, 0x0003}  // X or Y or Z POS
+};
+
+ComPOS gpos = { { 0x02, 0x01, 0x01, 0x0003}, { 2, 800} };
+
+void MoterPOSSerialEvent() {
+  byte ch;
+  //UARTから読み込み
+  while (MoterPOSSerial.available()) {
+    ch = MoterPOSSerial.read();
+    // 取得した電文(1byte)をリングバッファに詰める
+    RingWrite(ch);
+#ifdef DEBUG_SETTING
+    RingPrint();
 #endif
+  }
+}
+
+int MoveMoter( int moterID, int16_t movepos)
+{
+  int ii;
+  for ( ii = 0; (ii < (sizeof(gMoterID) / sizeof(gMoterID[0]))) && moterID != gMoterID[ii]; ii++) {
+    ;
+  }
+  if ( ii != (sizeof(gMoterID) / sizeof(gMoterID[0]))) {
+    if ( movepos > defMaxPos[ii] ) {
+      DebugSerialPrintln(F("defMaxPos"));
+      movepos = defMaxPos[ii];
+    } else if ( movepos < defMinPos[ii] ) {
+      DebugSerialPrintln(F("defMinPos"));
+      movepos = defMinPos[ii];
+    }
+  }
+  dxif.WriteWordData (moterID, 30, movepos, NULL);
+
+  DebugSerialPrint(moterID);
+  DebugSerialPrint("   ");
+  DebugSerialPrintln(movepos);
+
+  return 1;
+}
 void setup() {
   dxif.begin (57143);
-  Serial.begin(115200);
+  DebugSerial.begin(115200);
+  MoterPOSSerial.begin(115200);
+
+  RingInit();
 
   DebugSerialPrintln("Moter Control Started");
 }
+void getPos() {
+  int get_num;
+  byte bufferSerialSetting[RING_BUF];
+  do {
+    get_num = getCommand(bufferSerialSetting, gComHead, CMD_NUM);
+    if ( 1 <= get_num ) {
+      memcpy( &gpos, bufferSerialSetting, sizeof(ComPOS) );
+      MoveMoter( gpos.moter.moterID, gpos.moter.pos);
+      DebugSerialPrint(gpos.moter.moterID);
+      DebugSerialPrint("   ");
+      DebugSerialPrintln(gpos.moter.pos);
+    } else if ( -1 == get_num ) {
+      MoterPOSSerial.println("F");
+    }
+  } while ( 1 <= get_num  );
+}
 
 void loop() {
-  char ch;
-  char rcv;
-  int moter;
-  int OK;
-  int16_t pos;
   //UARTから読み込み
-  if (Serial.available()) {
+  getPos();
+  /*
+    if (Serial.available()) {
     ch = Serial.read();
     OK = inputSerial(ch, bufferSerial, &gindex);
 
@@ -69,7 +154,8 @@ void loop() {
           break;
       }
     }
-  }
+    }
+  */
 
 }
 
@@ -115,6 +201,7 @@ int inputSerial(char ch, char *lbufferSerial, int *inoutindex) {
     }
 
     *inoutindex = 0;
+    MoterPOSSerial.println("F");
 #ifdef DEBUG
     Serial.println("Fail");
 #endif
@@ -124,40 +211,3 @@ END:
   return 0;
 }
 
-int DecodeArmController(int *moter, char *input, int lindex, int *pos)
-{
-  *pos = 0;
-#ifdef DEBUG
-  Serial.println("=== DecodeArmMasterTerm ===");
-  Serial.println(lindex);
-  Serial.println(*input);
-#endif
-  if ( lindex >= 3) {
-    *moter = (input)[0] - '0';
-    *pos = atoi(&(input[1]));
-    return 1;
-  } else {
-    return 0;
-  }
-}
-int MoveMoter( int moterID, int16_t movepos)
-{
-  int ii;
-  for ( ii = 0; (ii < (sizeof(gMoterID)/sizeof(gMoterID[0]))) && moterID != gMoterID[ii]; ii++) {
-    ;
-  }
-  if ( ii != (sizeof(gMoterID) / sizeof(gMoterID[0]))) {
-    if ( movepos > defMaxPos[ii] ) {
-      DebugSerialPrintln(F("defMaxPos"));
-      movepos = defMaxPos[ii];
-    } else if ( movepos < defMinPos[ii] ) {
-      DebugSerialPrintln(F("defMinPos"));
-      movepos = defMinPos[ii];
-    }
-  }
-  dxif.WriteWordData (moterID, 30, movepos, NULL);
-  Serial.print(moterID);
-  Serial.print(movepos);
-  Serial.println(' ');
-  return 1;
-}
