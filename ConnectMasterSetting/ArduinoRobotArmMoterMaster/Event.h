@@ -89,8 +89,9 @@ class EventManager
     EventManager();
     void subscribe(Subscriber sub);
     void trigger(Event evt);
-    void triggerInterval(TimedTask timed);
+    int triggerInterval(TimedTask timed);
     void tick();
+    void kill(int taskID);
   private:
     TimedTask _interval[5]; // 5 available interval slots
     unsigned int _intervalSize;

@@ -8,6 +8,7 @@
 #include "Arduino.h"
 #include "Event.h"
 
+#define DebugSerial       Serial
 /**
  * Constructs a new EventManager and
  * figures out the size of the available
@@ -56,13 +57,14 @@ void EventManager::trigger(Event evt)
  * Setup a timed trigger that will execute an
  * event after a couple of milliseconds.
  */
-void EventManager::triggerInterval(TimedTask task)
+int EventManager::triggerInterval(TimedTask task)
 {
   if (_intervalSize >= _intervalPos)
   {
     _interval[_intervalPos] = task;
     _intervalPos++;
   }
+  return _intervalPos - 1;
 }
 
 /**
@@ -90,6 +92,15 @@ void EventManager::tick()
       }
     }
   }
-  
   _previousMs = currentMs;
 }
+
+
+void EventManager::kill(int taskID)
+{
+  
+  TimedTask *task = &_interval[taskID];
+  task->alive = 0;
+}
+
+

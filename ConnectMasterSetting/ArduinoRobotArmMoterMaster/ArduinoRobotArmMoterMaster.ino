@@ -1,19 +1,26 @@
+//#include <AltSoftSerial.h>
+
 // Set Goal Position
 //  Move position to the full range
 //  Since software serial is selected, dynamixel should be use at 57600bps or less.
 //  1.select [SOFT]
 //  2.compile & download
 
-#define DEBUG
+//#define DEBUG
 //#define DEBUG_SETTING
+//#define DEBUG_COMMAND
 
 #include <HardwareSerial.h>
-#include "Event.h"
+//############  HardwareSerial   ############
+#define DebugSerial       Serial
+#define POSSerial  Serial1
+#define POSSerialEvent serialEvent1
+#define SettingSerial Serial2
+#define SettingSerialEvent serialEvent2
+
 #include "EEPROMConfig.h"
 #include "Ring.h"
-extern "C" {
-#include "CalcCRC.h"
-}
+#include "Event.h"
 #include <avr/wdt.h> //WatchDogTimer
 
 #include <dxlib.h>
@@ -34,7 +41,13 @@ static int16_t defMinPos[MOTER_NUM] = { 10,   200, 0    };
 int16_t gpos[MOTER_NUM] = {800, 800, 800 };
 int dir = 10;
 
+byte gPosSendBuff[10];
+
 DXLIB dxif (true); // select software serial
+
+//############  One Run   ############
+unsigned long startMs;
+#define ONE_RUN_TIMEOUT 5000
 
 //############  PS3 Controller   ############
 
@@ -50,184 +63,6 @@ PS3USB PS3(&Usb); // This will just create the instance
 
 bool printAngle;
 uint8_t state = 0;
-
-//############  HardwareSerial   ############
-#define DebugSerial       Serial
-#define MoterSlaveSerial  Serial1
-#define MoterMasterSerial Serial2
-
-//############  MasterSetting   ############
-#define BUFF_MAX 255
-#define DEF_DELTA 100
-int gindexsetting;
-
-//############  EEPROM   ############
-configuration conf_ram;
-
-#define USE_PS3
-//#define USE_DX
-#define POS_RANGE1 137
-#define POS_RANGE2 117
-
-//############  MoterMasterCommand   ############
-#define HEADER_LEN 5
-#define CRC_SIZE 2
-
-typedef struct COMMAND_HEAD_t
-{
-  //byte == unsigned char
-  unsigned char main;
-  unsigned char sub;
-  unsigned char ver;
-  unsigned short len;
-} CommandHead;
-
-CommandHead gComHead[2] = {
-  { 0x01, 0x01, 0x01, 0x0003}// XYZ DelataCommand
-};
-
-typedef struct XYZ_t
-{
-  byte x;
-  byte y;
-  byte z;
-} XYZ;
-
-typedef struct ComXYZ_t
-{
-  CommandHead head;
-  XYZ pos;
-} ComXYZ;
-
-ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
-
-//############  EventManager   ############
-EventManager evtManager;
-
-struct SettingLisnerTask : public EventTask
-{
-  using EventTask::execute;
-
-  int getSetting()
-  {
-    byte ch;
-    byte rcv;
-    int moter;
-    int OK;
-    int16_t pos;
-    byte bufferSerialSetting[RING_BUF];
-    //UARTから読み込み
-    if (MoterMasterSerial.available()) {
-      ch = MoterMasterSerial.read();
-      OK = inputSerialSetting(ch, bufferSerialSetting, &gindexsetting);
-
-      if ( OK ) {
-        memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
-      } else {
-        ;//        MoterMasterSerial.end();
-      }
-    } else {
-      ;//      MoterMasterSerial.end();
-    } else {
-        DebugSerial.println(" NOT MoterMasterSerial.available");
-    }
-  }
-
-  int inputSerialSetting(byte ch, byte *lbufferSerial, int *inoutindex) {
-    int ii;
-    unsigned short len = 0;
-    byte lCmd[RING_BUF];// 本当は電文の最大長 + alpha を確保する。ので間違いではない
-    int fail = 1;// デフォルトは電文取得に失敗
-
-    // 取得した電文(1byte)をリングバッファに詰める
-    RingWrite(ch);
-    // なんとなく取得した電文数を記録する。多分、全体でみると間違っているのでTODO
-    (*inoutindex)++;
-
-    if ( HEADER_LEN <= RingSize() ) {
-      RingGetCommand(lCmd, HEADER_LEN );
-    }
-
-    // ヘッダ部の読み込み
-    while (RingSize() >= (HEADER_LEN) ) {
-      for ( ii = 0; ii < (sizeof(gComHead) / sizeof(gComHead[0])); ii++ ) {
-        if (gComHead[ii].main == lCmd[0]) {
-          if (gComHead[ii].sub == lCmd[1]) {
-            if (gComHead[ii].ver == lCmd[2]) {
-              len = *((unsigned short*)(&lCmd[3]));
-              //DebugSerial.print("len = "); DebugSerial.println(len);
-              if ( gComHead[ii].len != len ) {
-                len = 0;
-                // レングス不正のため次の位置に更新（2byteのためこことforのあとので次にする）
-                RingReadPosAdd(1);
-                // ヘッダ取得に失敗したことを記録する
-                fail = 1;
-              } else {
-                fail = 0;
-                break;
-              }
-            }
-          }
-        }
-      }
-      if (fail == 0) {
-        // 成功したらwhileを抜ける
-        break;
-      } else {
-        // ヘッダ取得失敗のためリングバッファを1byte次にする
-        RingReadPosAdd(1);
-      }
-    }
-#ifdef DEBUG_SETTING
-    //RingPrint();
-#endif
-
-    //DebugSerial.print("Size = "); DebugSerial.println(RingSize());
-    // 取得に成功しており、かつ、リングバッファがヘッダサイズ+ヘッダに書かれたデータ部のレングス+CRCサイズ以上か
-    if ( fail == 0 && RingSize() >= (HEADER_LEN + len + CRC_SIZE) ) {
-#ifdef DEBUG_SETTING
-      DebugSerial.println("============");
-#endif
-      memset(lCmd, 0x00, RING_BUF);
-      RingGetCommand(lCmd, HEADER_LEN + len + CRC_SIZE  );
-#ifdef DEBUG_SETTING
-      RingPrint2(lCmd, HEADER_LEN + len + CRC_SIZE);//DebugCode
-#endif
-      // 取得したデータからCRC計算
-      unsigned short crc = crc16(0, (unsigned char*)lCmd, HEADER_LEN + len);
-      // 通信で取得したCRC
-      unsigned short settingcrc = *((unsigned short*)(&lCmd[HEADER_LEN + len]));
-#ifdef DEBUG_SETTING
-      DebugSerial.println(crc);
-      DebugSerial.println(settingcrc);
-#endif
-      if ( crc == settingcrc ) {
-        // 電文の取得に成功した
-#ifdef DEBUG_SETTING
-        DebugSerial.println("Success");
-#endif
-        // 次の位置に更新
-        RingReadPosAdd((HEADER_LEN + len + CRC_SIZE));
-        return 1;
-      } else {
-        // 電文の取得に失敗したので
-        // 次の位置に更新
-        RingReadPosAdd(1);
-#ifdef DEBUG_SETTING
-        DebugSerial.println("Fail");
-#endif
-      }
-    }
-END:
-    return 0;
-  }
-
-  void execute(Event evt)
-  {
-    getSetting();
-  }
-} SettingLisnerTask;
-
 //############  DebugCode   ############
 #ifdef DEBUG    //Macros are usually in all capital letters.
 #define DebugSerialPrint(...)    DebugSerial.print(__VA_ARGS__)     //DPRINT is a macro, debug print
@@ -237,24 +72,315 @@ END:
 #define DebugSerialPrintln(...)   //now defines a blank line
 #endif
 
+//############  MasterSetting   ############
+#define BUFF_MAX 255
+#define DEF_DELTA 100
+int gindexsetting;
+
+//############  EEPROM   ############
+configuration conf_ram = conf_def;
+
+#define USE_PS3
+//#define USE_DX
+#define POS_RANGE1 137
+#define POS_RANGE2 117
+
+//############  MoterMasterCommand   ############
+#define CMD_NUM 2
+
+CommandHead gComHead[CMD_NUM] = {
+  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
+  { 0x02, 0x01, 0x01, 0x0003}  // X or Y or Z POS
+};
+
+typedef struct XYZ_t
+{
+  byte x;
+  byte y;
+  byte z;
+} XYZ;
+
+typedef struct Moter_t
+{
+  byte moterID;
+  byte pos;
+} MoterPOS;
+
+typedef struct ComPOS_t
+{
+  CommandHead head;
+  XYZ pos;
+} ComXYZ;
+
+ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
+ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
+
+// SingletonHolderを使う際のお決まりtypedef
+typedef tmlib::SingletonHolder<RingBuffer> RingHolder;
+// 海外のコードでよくみかけるdefineやexternで使うthe...形式(ちょっとオシャレ?)
+#define theRing RingHolder::getInstance()
+
+//############  EventManager   ############
+EventManager evtManager;
+int gSettingTaskID;
+int KillFlg = 0;
+int Onekill = 0;
+
+//############  EventManager   SettingLisnerTask   ############
+struct PosSenerTask : public EventTask
+{
+  using EventTask::execute;
+
+  int MoveMoter( int index, int moterID, int16_t *movepos)
+  {
+    if ( *movepos > defMaxPos[index] ) {
+      DebugSerialPrintln(F("defMaxPos"));
+      *movepos = defMaxPos[index];
+    } else if ( *movepos < defMinPos[index] ) {
+      DebugSerialPrintln(F("defMinPos"));
+      *movepos = defMinPos[index];
+    }
+    // Set goal position
+    DebugSerialPrint(F("moterID: "));
+    DebugSerialPrintln(moterID);
+    DebugSerialPrint("movepos");
+#if 0
+    char buf[255];
+    sprintf(buf, "%d%d", moterID, *movepos);
+    int n = strlen(buf);
+    unsigned short crc = crc16(0, (unsigned char*)buf, n);
+    // この電文形式はすべてASCIIなのでIDEのシリアルモニターで電文を確認できます
+    sprintf(buf, "%s%02x%02x", buf, (crc >> 8), (crc & 0xff));
+    if (POSSerial.availableForWrite()) {
+      POSSerial.print(buf);
+      POSSerial.print(';');
+    } else {
+      DebugSerial.println('  NOT  POSSerial.available');
+    }
+
+    if (DebugSerial.availableForWrite()) {
+      DebugSerial.print("====POSSerial===");
+      DebugSerial.print(buf);
+      DebugSerial.println(';');
+    }
+#endif
+
+    byte buf[10];
+
+    buf[0] = gComHead[1].main;
+    buf[1] = gComHead[1].sub;
+    buf[2] = gComHead[1].ver;
+    buf[3] = (gComHead[1].len) & 0xff;
+    buf[4] = (gComHead[1].len) >> 8;
+    buf[5] = moterID;
+    buf[6] = (*movepos) & 0xff;
+    buf[7] = (*movepos) >> 8;
+
+    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, HEADER_LEN + gComHead[1].len);
+    buf[8] = (conf_def_crc & 0xff);
+    buf[9] = (conf_def_crc >> 8);
+
+    memcpy( gPosSendBuff, buf, 10);
+
+    if (POSSerial.availableForWrite()) {
+      POSSerial.write(buf, 10);
+    }
+    return 1;
+  }
+
+  void execute(Event evt) {
+    if (PS3.PS3Connected || PS3.PS3NavigationConnected) {
+      int16_t movex = PS3.getAnalogHat(LeftHatX);
+      int16_t movey = PS3.getAnalogHat(LeftHatY);
+      int16_t movez = PS3.getAnalogHat(RightHatY);
+
+      if (movex > POS_RANGE1 || movex < POS_RANGE2)
+      {
+
+        DebugSerialPrint(F("LeftHatX: "));
+        DebugSerialPrint(LeftHatX);
+
+        if ( movex > POS_RANGE1 ) {
+          // 1はゼロ除算対策
+          // モーターの配置の都合上、-1をかけて反対にする
+          gpos[0] = gpos[0] - 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ - (gxyz.pos.x - DEF_DELTA);
+        } else {
+          gpos[0] = gpos[0] - 1/*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.x - DEF_DELTA);
+        }
+        MoveMoter( 0, gMoterID[0], &(gpos[0]));
+        DebugSerialPrint("gMoterID[0] = ");
+        DebugSerialPrintln(gpos[0]);
+        DebugSerialPrint("gxyz.pos.x = ");
+        DebugSerialPrintln(gxyz.pos.x);
+        DebugSerialPrint("gxyz.pos.y = ");
+        DebugSerialPrintln(gxyz.pos.y);
+        DebugSerialPrint("gxyz.pos.z = ");
+        DebugSerialPrintln(gxyz.pos.z);
+
+      }
+
+      if (movey > POS_RANGE1 || movey < POS_RANGE2 )
+      {
+        DebugSerialPrint(F("\tLeftHatY: "));
+        DebugSerialPrint(movey);
+        if ( movey > POS_RANGE1 ) {
+          // 1はゼロ除算対策
+          gpos[1] = gpos[1] + 1/*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.y - DEF_DELTA);
+        } else {
+          gpos[1] = gpos[1] + 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
+        }
+        MoveMoter( 1, gMoterID[1], &(gpos[1]));
+        DebugSerialPrint("gMoterID[1] = ");
+        DebugSerialPrintln(gpos[1]);
+        DebugSerialPrint("gxyz.pos.x = ");
+        DebugSerialPrintln(gxyz.pos.x);
+        DebugSerialPrint("gxyz.pos.y = ");
+        DebugSerialPrintln(gxyz.pos.y);
+        DebugSerialPrint("gxyz.pos.z = ");
+        DebugSerialPrintln(gxyz.pos.z);
+
+      }
+      /*
+        if( PS3.getAnalogHat(RightHatX) > 137 || PS3.getAnalogHat(RightHatX) < 117)
+        {
+        DebugSerialPrint(F("\tRightHatX: "));
+        DebugSerialPrint(RightX);
+        }
+      */
+
+      if ( movez > POS_RANGE1 || movez < POS_RANGE2)
+      {
+        DebugSerialPrint(F("\tRightHatY: "));
+        DebugSerialPrintln(movez);
+
+        if ( movez > POS_RANGE1 ) {
+          // 1はゼロ除算対策
+          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.z - DEF_DELTA);
+        } else {
+          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.z - DEF_DELTA);
+        }
+        MoveMoter( 2, gMoterID[2], &(gpos[2]));
+        DebugSerialPrint("gMoterID[2] = ");
+        DebugSerialPrintln(gpos[2]);
+        DebugSerialPrint("gxyz.pos.x = ");
+        DebugSerialPrintln(gxyz.pos.x);
+        DebugSerialPrint("gxyz.pos.y = ");
+        DebugSerialPrintln(gxyz.pos.y);
+        DebugSerialPrint("gxyz.pos.z = ");
+        DebugSerialPrintln(gxyz.pos.z);
+      }
+    } else if (PS3.PS3MoveConnected) { // One can only set the color of the bulb, set the rumble, set and get the bluetooth address and calibrate the magnetometer via USB
+      DebugSerialPrintln("PS3MoveConnected");
+      if (state == 0) {
+        PS3.moveSetRumble(0);
+        PS3.moveSetBulb(Off);
+      } else if (state == 1) {
+        PS3.moveSetRumble(75);
+        PS3.moveSetBulb(Red);
+      } else if (state == 2) {
+        PS3.moveSetRumble(125);
+        PS3.moveSetBulb(Green);
+      } else if (state == 3) {
+        PS3.moveSetRumble(150);
+        PS3.moveSetBulb(Blue);
+      } else if (state == 4) {
+        PS3.moveSetRumble(175);
+        PS3.moveSetBulb(Yellow);
+      } else if (state == 5) {
+        PS3.moveSetRumble(200);
+        PS3.moveSetBulb(Lightblue);
+      } else if (state == 6) {
+        PS3.moveSetRumble(225);
+        PS3.moveSetBulb(Purple);
+      } else if (state == 7) {
+        PS3.moveSetRumble(250);
+        PS3.moveSetBulb(White);
+      }
+
+      state++;
+      if (state > 7)
+        state = 0;
+      delay(1000);
+    }
+
+  }
+} PosSenerTask;
+
+//############  EventManager   SettingLisnerTask   ############
+
+struct SettingLisnerTask : public EventTask
+{
+  using EventTask::execute;
+
+  void execute(Event evt) {
+    String extra = evt.extra;
+#ifdef DEBUG_COMMAND
+    DebugSerial.println("SettingLisnerTask execute ");
+#endif
+    if (extra == "Stop")
+    {
+    } else {
+      int get_num;
+      byte bufferSerialSetting[RING_BUF];
+      //UARTから読み込み
+
+      do {
+        get_num = theRing.getCommand(bufferSerialSetting, gComHead, CMD_NUM);
+        if ( 1 <= get_num ) {
+          memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
+          conf_ram.delta_x = gxyz.pos.x;
+          conf_ram.delta_y = gxyz.pos.y;
+          conf_ram.delta_z = gxyz.pos.z;
+          write_config(conf_ram);
+          KillFlg = 1;
+        } else if ( -1 == get_num ) {
+          ;//SettingSerial.println("F");
+        }
+      } while ( 1 <= get_num  );
+    }
+  }
+} SettingLisnerTask;
+
+void POSSerialEvent() {
+  byte ch;
+  //UARTから読み込み
+  while (POSSerial.available()) {
+    ch = POSSerial.read();
+
+    if (ch == 'F') {
+      ReSend();
+    }
+  }
+}
+
+void SettingSerialEvent() {
+  byte ch;
+  //UARTから読み込み
+  while (SettingSerial.available()) {
+    ch = SettingSerial.read();
+
+    theRing.RingWrite(ch);
+
+#ifdef DEBUG_SETTING
+    theRing.RingPrint();
+#endif
+  }
+}
+
 //############  setup   ############
 void setup() {
   DebugSerial.begin(115200);// Debug
-  MoterSlaveSerial.begin(115200);// Connect MoterSlave
-  MoterMasterSerial.begin(115200);// Connect Setting
-  if (!DebugSerial) {
-    DebugSerial.end();
-  }
-  if (!MoterSlaveSerial) {
-    DebugSerial.println("MoterSlaveSerial.end()");
-    MoterSlaveSerial.end();
-  }
-  if (!MoterMasterSerial) {
-    DebugSerial.println("MoterMasterSerial.end()");
-    MoterMasterSerial.end();
-  }
+  POSSerial.begin(115200);// Connect MoterSlave
+  SettingSerial.begin(115200);// Connect Setting
+  // シングルトンなRingBufferクラスを生成
+  RingHolder::create();
+  theRing.Init();
+  gxyz = gxyz_def;
 
-  RingInit();
+  conf_ram = read_config();
+  gxyz.pos.x = conf_ram.delta_x;
+  gxyz.pos.y = conf_ram.delta_y;
+  gxyz.pos.z = conf_ram.delta_z;
 
 #ifdef DEBUG
   DebugSerial.println("=======CONFIG GET RESULT START =======");
@@ -264,10 +390,6 @@ void setup() {
   DebugSerial.println(conf_ram.crc);
   DebugSerial.println("=======GET RESULT END=======");
 #endif
-#ifdef USE_DX
-  dxif.begin (57143);
-#endif
-
 #ifdef USE_PS3
   if (Usb.Init() == -1) {
     DebugSerialPrintln("OSC did not start");
@@ -277,178 +399,57 @@ void setup() {
   }
 #endif
 
-#ifdef USE_DX
-  int ii;
-  // Get max/min position limit
-  for ( ii = 0; ii < MOTER_NUM; ii++) {
-    dxif.ReadWordData (gMoterID[ii], REG_MOTER_MAX_POS, (uint16_t *)&gMaxPos[ii], NULL);
-    DebugSerialPrint("REG_MOTER_MAX_POS  ");
-    DebugSerialPrintln(gMaxPos[ii]);
-    dxif.ReadWordData (gMoterID[ii], REG_MOTER_MIN_POS, (uint16_t *)&gMinPos[ii], NULL);
-    DebugSerialPrint("REG_MOTER_MIN_POS  ");
-    DebugSerialPrintln(gMinPos[ii]);
-  }
-#endif
   DebugSerialPrintln("Moter Control Started");
 
-  evtManager.subscribe(Subscriber("event.keepAlive", &SettingLisnerTask));
-  Event keepAlive = Event("event.keepAlive");
-  evtManager.triggerInterval(TimedTask(500, keepAlive));
+  evtManager.subscribe(Subscriber("event.SettingLisner", &SettingLisnerTask));
+  //Event SettingLisner = Event("event.SettingLisner");
+  Event SettingEvent = Event("event.SettingLisner", "Start");
+  gSettingTaskID = evtManager.triggerInterval(TimedTask(500, SettingEvent));
+  //evtManager.trigger(SettingEvent);
+
+  evtManager.subscribe(Subscriber("event.PosSend", &PosSenerTask));
+  Event poSsenderTsk = Event("event.PosSend");
+  evtManager.triggerInterval(TimedTask(80, poSsenderTsk));
+
+  startMs  = millis();
 }
 
 void loop() {
 
   evtManager.tick();
 
+  unsigned long currentMs = millis();
+  unsigned long difference = currentMs - startMs;
+  if ( (Onekill == 0) && ((KillFlg == 1) || (difference >= ONE_RUN_TIMEOUT ))) {
+    SettingSerial.end();// Stop Setting
+    evtManager.kill(gSettingTaskID);
+    KillFlg = 0;
+    Onekill = 1;
+  }
+
   if (!DebugSerial) {
     DebugSerial.end();
   }
-  if (!MoterSlaveSerial) {
-    DebugSerial.println("MoterSlaveSerial.end()");
-    MoterSlaveSerial.end();
+  if (!POSSerial) {
+    POSSerial.end();
   }
-  if (!MoterMasterSerial) {
-    DebugSerial.println("MoterMasterSerial.end()");
-    MoterMasterSerial.end();
+  if (!SettingSerial) {
+    SettingSerial.end();
   }
 
-#ifdef USE_PS3
   Usb.Task();
 
-  if (PS3.PS3Connected || PS3.PS3NavigationConnected) {
-    int16_t movex = PS3.getAnalogHat(LeftHatX);
-
-    if (movex > POS_RANGE1 || movex < POS_RANGE2)
-    {
-
-      DebugSerialPrint(F("LeftHatX: "));
-      DebugSerialPrint(LeftHatX);
-
-      if ( movex > POS_RANGE1 ) {
-        // 1はゼロ除算対策
-        // モーターの配置の都合上、-1をかけて反対にする
-        gpos[0] = gpos[0] +  -1 * (movex - POS_RANGE1 + 1) / 25 - (gxyz.pos.x - DEF_DELTA);
-      } else {
-        gpos[0] = gpos[0] +  -1 * (movex - POS_RANGE1 + 1) / 25 + (gxyz.pos.x - DEF_DELTA);
-      }
-      MoveMoter( 0, gMoterID[0], &(gpos[0]));
-    }
-
-    if ( PS3.getAnalogHat(LeftHatY) > POS_RANGE1 || PS3.getAnalogHat(LeftHatY) < POS_RANGE2 )
-    {
-      int16_t movey = PS3.getAnalogHat(LeftHatY);
-      DebugSerialPrint(F("\tLeftHatY: "));
-      DebugSerialPrint(movey);
-      if ( movey > POS_RANGE1 ) {
-        // 1はゼロ除算対策
-        gpos[1] = gpos[1] + (movey - POS_RANGE1 + 1) / 25 + (gxyz.pos.y - DEF_DELTA);
-      } else {
-        gpos[1] = gpos[1] + (movey - POS_RANGE2 + 1) / 25 - (gxyz.pos.y - DEF_DELTA);
-      }
-      MoveMoter( 1, gMoterID[1], &(gpos[1]));
-
-    }
-    /*
-      if( PS3.getAnalogHat(RightHatX) > 137 || PS3.getAnalogHat(RightHatX) < 117)
-      {
-      DebugSerialPrint(F("\tRightHatX: "));
-      DebugSerialPrint(RightX);
-      }
-    */
-
-    if ( PS3.getAnalogHat(RightHatY) > POS_RANGE1 || PS3.getAnalogHat(RightHatY) < POS_RANGE2)
-    {
-      int16_t movez = PS3.getAnalogHat(RightHatY);
-      DebugSerialPrint(F("\tRightHatY: "));
-      DebugSerialPrintln(movez);
-
-      if ( movez > POS_RANGE1 ) {
-        // 1はゼロ除算対策
-        gpos[2] = gpos[2] + (movez - POS_RANGE1 + 1) / 25 + (gxyz.pos.z - DEF_DELTA);
-      } else {
-        gpos[2] = gpos[2] + (movez - POS_RANGE2 + 1) / 25 - (gxyz.pos.z - DEF_DELTA);
-      }
-      MoveMoter( 2, gMoterID[2], &(gpos[2]));
-    }
-  } else if (PS3.PS3MoveConnected) { // One can only set the color of the bulb, set the rumble, set and get the bluetooth address and calibrate the magnetometer via USB
-    DebugSerialPrintln("PS3MoveConnected");
-    if (state == 0) {
-      PS3.moveSetRumble(0);
-      PS3.moveSetBulb(Off);
-    } else if (state == 1) {
-      PS3.moveSetRumble(75);
-      PS3.moveSetBulb(Red);
-    } else if (state == 2) {
-      PS3.moveSetRumble(125);
-      PS3.moveSetBulb(Green);
-    } else if (state == 3) {
-      PS3.moveSetRumble(150);
-      PS3.moveSetBulb(Blue);
-    } else if (state == 4) {
-      PS3.moveSetRumble(175);
-      PS3.moveSetBulb(Yellow);
-    } else if (state == 5) {
-      PS3.moveSetRumble(200);
-      PS3.moveSetBulb(Lightblue);
-    } else if (state == 6) {
-      PS3.moveSetRumble(225);
-      PS3.moveSetBulb(Purple);
-    } else if (state == 7) {
-      PS3.moveSetRumble(250);
-      PS3.moveSetBulb(White);
-    }
-
-    state++;
-    if (state > 7)
-      state = 0;
-    delay(1000);
-  }
-#endif
-  delay(30);
 }
 
-void DebugLogXYZ( int x, int y, int z)
+void ReSend()
 {
-  DebugSerialPrint(F("X: "));
-  DebugSerialPrint(x);
-  DebugSerialPrint(F("\t y: "));
-  DebugSerialPrint(y);
-  DebugSerialPrint(F("\t z: "));
-  DebugSerialPrintln(z);
+  if (POSSerial.availableForWrite())
+  {
+    DebugSerial.println("Resend");
+    POSSerial.write(gPosSendBuff, 10);
+  }
 }
 
-int MoveMoter( int index, int moterID, int16_t *movepos)
-{
-  if ( *movepos > defMaxPos[index] ) {
-    DebugSerialPrintln(F("defMaxPos"));
-    *movepos = defMaxPos[index];
-  } else if ( *movepos < defMinPos[index] ) {
-    DebugSerialPrintln(F("defMinPos"));
-    *movepos = defMinPos[index];
-  }
-  // Set goal position
-  DebugSerialPrint(F("moterID: "));
-  DebugSerialPrintln(moterID);
-  DebugSerialPrint("movepos");
-  DebugSerialPrintln(*movepos);
-#ifdef USE_DX
-  dxif.WriteWordData (moterID, 30, *movepos, NULL);
-#endif
-  char buf[255];
-  sprintf(buf, "%d%d", moterID, *movepos);
-  int n = strlen(buf);
-  unsigned short crc = crc16(0, (unsigned char*)buf, n);
-  // この電文形式はすべてASCIIなのでIDEのシリアルモニターで電文を確認できます
-  sprintf(buf, "%s%02x%02x", buf, (crc >> 8), (crc & 0xff));
-  if (MoterSlaveSerial.available()) {
-    MoterSlaveSerial.print(buf);
-    MoterSlaveSerial.print(';');
-  }
 
-  if (DebugSerial.available()) {
-    DebugSerial.print(buf);
-    DebugSerial.print(';');
-  }
-  return 1;
-}
+
 
