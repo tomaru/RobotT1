@@ -6,7 +6,7 @@
 //  1.select [SOFT]
 //  2.compile & download
 
-//#define DEBUG
+#define DEBUG
 //#define DEBUG_SETTING
 //#define DEBUG_COMMAND
 
@@ -18,15 +18,10 @@
 #define SettingSerial Serial2
 #define SettingSerialEvent serialEvent2
 
-#include "EEPROMConfig.h"
 #include "Ring.h"
 #include "Event.h"
-#include <avr/wdt.h> //WatchDogTimer
 
-#include <dxlib.h>
-//#include <SoftwareSerial.h>
 #include <PS3USB.h>
-//#include <LiquidCrystal.h>
 
 #define REG_MOTER_MAX_POS 8
 #define REG_MOTER_MIN_POS 6
@@ -42,8 +37,6 @@ int16_t gpos[MOTER_NUM] = {800, 800, 800 };
 int dir = 10;
 
 byte gPosSendBuff[10];
-
-DXLIB dxif (true); // select software serial
 
 //############  One Run   ############
 unsigned long startMs;
@@ -76,9 +69,6 @@ uint8_t state = 0;
 #define BUFF_MAX 255
 #define DEF_DELTA 100
 int gindexsetting;
-
-//############  EEPROM   ############
-configuration conf_ram = conf_def;
 
 #define USE_PS3
 //#define USE_DX
@@ -116,7 +106,7 @@ ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
 ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
 
 // SingletonHolderを使う際のお決まりtypedef
-typedef tmlib::SingletonHolder<RingBuffer> RingHolder;
+typedef tmlib::SingletonHolder<MyRingBuffer> RingHolder;
 // 海外のコードでよくみかけるdefineやexternで使うthe...形式(ちょっとオシャレ?)
 #define theRing RingHolder::getInstance()
 
@@ -143,7 +133,8 @@ struct PosSenerTask : public EventTask
     // Set goal position
     DebugSerialPrint(F("moterID: "));
     DebugSerialPrintln(moterID);
-    DebugSerialPrint("movepos");
+    DebugSerialPrint("movepos:  ");
+    DebugSerialPrintln(*movepos);
 #if 0
     char buf[255];
     sprintf(buf, "%d%d", moterID, *movepos);
@@ -176,7 +167,7 @@ struct PosSenerTask : public EventTask
     buf[6] = (*movepos) & 0xff;
     buf[7] = (*movepos) >> 8;
 
-    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, HEADER_LEN + gComHead[1].len);
+    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, 5 + gComHead[1].len);
     buf[8] = (conf_def_crc & 0xff);
     buf[9] = (conf_def_crc >> 8);
 
@@ -227,7 +218,7 @@ struct PosSenerTask : public EventTask
           // 1はゼロ除算対策
           gpos[1] = gpos[1] + 1/*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.y - DEF_DELTA);
         } else {
-          gpos[1] = gpos[1]- 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
+          gpos[1] = gpos[1] - 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
         }
         MoveMoter( 1, gMoterID[1], &(gpos[1]));
         DebugSerialPrint("gMoterID[1] = ");
@@ -327,11 +318,8 @@ struct SettingLisnerTask : public EventTask
       do {
         get_num = theRing.getCommand(bufferSerialSetting, gComHead, CMD_NUM);
         if ( 1 <= get_num ) {
-          memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
-          conf_ram.delta_x = gxyz.pos.x;
-          conf_ram.delta_y = gxyz.pos.y;
-          conf_ram.delta_z = gxyz.pos.z;
-          write_config(conf_ram);
+          gxyz = *(ComXYZ*)(bufferSerialSetting);
+          //memcpy( &gxyz , bufferSerialSetting, sizeof(ComXYZ));
           KillFlg = 1;
         } else if ( -1 == get_num ) {
           ;//SettingSerial.println("F");
@@ -369,32 +357,25 @@ void SettingSerialEvent() {
 
 //############  setup   ############
 void setup() {
+#ifdef DEBUG
   DebugSerial.begin(115200);// Debug
+#endif
   POSSerial.begin(115200);// Connect MoterSlave
   SettingSerial.begin(115200);// Connect Setting
+    
   // シングルトンなRingBufferクラスを生成
   RingHolder::create();
   theRing.Init();
   gxyz = gxyz_def;
 
-  conf_ram = read_config();
-  gxyz.pos.x = conf_ram.delta_x;
-  gxyz.pos.y = conf_ram.delta_y;
-  gxyz.pos.z = conf_ram.delta_z;
 
-#ifdef DEBUG
-  DebugSerial.println("=======CONFIG GET RESULT START =======");
-  DebugSerial.println(conf_ram.delta_x);
-  DebugSerial.println(conf_ram.delta_y);
-  DebugSerial.println(conf_ram.delta_z);
-  DebugSerial.println(conf_ram.crc);
-  DebugSerial.println("=======GET RESULT END=======");
-#endif
+  gxyz.pos.x = 100;
+  gxyz.pos.y = 100;
+  gxyz.pos.z = 100;
 #ifdef USE_PS3
   if (Usb.Init() == -1) {
     DebugSerialPrintln("OSC did not start");
     // don't do anything more:
-    wdt_enable(WDTO_1S);   // 1秒のウォッチドッグタイマーをセット
     return;
   }
 #endif
@@ -445,7 +426,9 @@ void ReSend()
 {
   if (POSSerial.availableForWrite())
   {
+#ifdef DEBUG
     DebugSerial.println("Resend");
+#endif
     POSSerial.write(gPosSendBuff, 10);
   }
 }

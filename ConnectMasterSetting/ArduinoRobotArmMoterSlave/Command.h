@@ -25,8 +25,8 @@ int getCommand(byte *lbufferSerial, CommandHead *head, int cmd_num)
   unsigned short len = 0;
   byte lCmd[RING_BUF];// 本当は電文の最大長 + alpha を確保する。ので間違いではない
   int fail = 1;// デフォルトは電文取得に失敗
-
-  if ( HEADER_LEN <= RingSize() ) {
+  // 最小の電文サイズを超えたら電文を確認するようにしないと無駄な確認が多くなり制御に支障が出ます
+  if ( HEADER_LEN + 3 + 2 <= RingSize() ) {
     RingGetCommand(lCmd, HEADER_LEN );
   } else {
     return 0;

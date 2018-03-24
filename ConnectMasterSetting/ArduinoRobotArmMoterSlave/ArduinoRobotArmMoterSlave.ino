@@ -8,9 +8,9 @@
 //#define DEBUG_SETTING
 
 //############  HardwareSerial   ############
-#define DebugSerial       Serial1
-#define MoterPOSSerial  Serial
-#define MoterPOSSerialEvent serialEvent
+#define DebugSerial       Serial
+#define MoterPOSSerial  Serial1
+#define MoterPOSSerialEvent serialEvent1
 
 #ifdef DEBUG    //Macros are usually in all capital letters.
 #define DebugSerialPrint(...)    Serial.print(__VA_ARGS__)     //DPRINT is a macro, debug print

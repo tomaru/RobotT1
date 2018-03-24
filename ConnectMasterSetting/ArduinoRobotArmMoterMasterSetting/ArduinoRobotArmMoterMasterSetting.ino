@@ -17,7 +17,7 @@ extern "C" {
 #include <LiquidCrystal.h>
 
 //############  MoterMasterCommand   ############
-#define HEADER_LEN 5
+#define HEADER_LEN 6
 
 typedef struct COMMAND_HEAD_t
 {
@@ -63,21 +63,22 @@ struct SendTask : public EventTask
 
   void execute(Event evt)
   {
-    byte buf[10];
+    byte buf[11];
 
     buf[0] = gcomhead[0].main;
     buf[1] = gcomhead[0].sub;
     buf[2] = 1;//Version
     buf[3] = (gcomhead[0].len) & 0xff;
     buf[4] = (gcomhead[0].len) >> 8;
-    buf[5] = conf_ram.delta_x;
-    buf[6] = conf_ram.delta_y;
-    buf[7] = conf_ram.delta_z;
+    buf[5] = 0xFF;
+    buf[6] = conf_ram.delta_x;
+    buf[7] = conf_ram.delta_y;
+    buf[8] = conf_ram.delta_z;
 
     unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, HEADER_LEN + 3);
-    buf[8] = (conf_def_crc & 0xff);
-    buf[9] = (conf_def_crc >> 8);
-    Serial3.write(buf, 10);
+    buf[9] = (conf_def_crc & 0xff);
+    buf[10] = (conf_def_crc >> 8);
+    Serial3.write(buf, 11);
   }
 } SendTask;
 

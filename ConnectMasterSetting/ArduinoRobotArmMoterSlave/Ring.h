@@ -2,7 +2,7 @@
 #define Ring_h
 
 //############  RingBuffer   ############
-#define RING_BUF 0x800 // 2のべき乗である必要がある
+#define RING_BUF 0x100 // 2のべき乗である必要がある
 typedef struct st_ring
 {
   byte *read_pos;
@@ -18,9 +18,7 @@ typedef struct st_ring
 RingBuffer ring;
 
 // 次の要素位置を特定する。こっちのほうが下より正確
-#define nextpos(a)  (byte *)(ring.start_pos + ((unsigned int)(((a - ring.start_pos == 0 ? sizeof(byte) : (byte)(a - ring.start_pos))/sizeof(byte))+1 ) & (unsigned int)(ring.mask)))
-// 上を端折ったやつ。
-//#define nextpos(a)  (byte *)(ring.start_pos + ((unsigned int)((a - ring.start_pos) + 1) & (unsigned int)(ring.mask)))
+#define nextpos(a,b)  (byte *)(ring.start_pos + ((unsigned int)(((unsigned int)(a - ring.start_pos))+b ) & (unsigned int)(ring.mask)))
 
 // リングバッファの初期化関数
 void RingInit()
@@ -70,6 +68,7 @@ void RingPrint2(byte *out, int len)
 // 引数のoutにリングバッファから取り出した文字列を設定する
 int RingGetCommand(byte (&out)[RING_BUF], int maxlen)
 {
+  unsigned int len_debug=0;
   unsigned int ii;
   unsigned int jj=0;
   int ones=0;
@@ -79,16 +78,26 @@ int RingGetCommand(byte (&out)[RING_BUF], int maxlen)
   for(ii=0; (ii < RING_BUF) && (ii < maxlen) && ((ring.read_pos+(ii-jj & ring.mask)) != ring.write_pos); ii++ ){
     if( ((ring.read_pos+ii) > (ring.end_pos)) &&  (ones == 0) ) {
       ones = 1;
-      // 4つ{0,1,2,3}で、要素1の入力なら、iiは2になっている
+      // 4つ{0,1,2,3}で、要素1の入力なら、iiは3になっている
       jj = ii;
     }
     if(ones == 1){
-      (out[ii]) = *(ring.start_pos + (ii-jj & ring.mask)) ;
+//      (out[ii]) = *(ring.start_pos + (ii-jj & ring.mask)) ;
+      (out[ii]) = *(ring.start_pos + (ii-jj)) ;
+      len_debug++;
     }else{
       (out[ii]) = *(ring.read_pos+ii) ;
     }
     len++;
   }
+  /*
+  if(len_debug>0){
+  Serial.print("R"); Serial.print(len_debug);Serial.print("   "); Serial.println(len);
+  Serial.println(ring.len);
+   Serial.println(ring.read_pos - ring.start_pos);
+  RingPrint();
+  }
+  */
   return len;
 }
 
@@ -101,7 +110,7 @@ int RingSize()
 int RingWrite(byte data)
 {
   *(ring.write_pos) = data;
-  ring.write_pos = nextpos(ring.write_pos) ;// Next Posision
+  ring.write_pos = nextpos(ring.write_pos,1) ;// Next Posision
   if(ring.write_pos == ring.read_pos){
     DebugSerialPrintln("ring start  ");
   }
@@ -112,8 +121,8 @@ int RingWrite(byte data)
 // リングバッファの読み込み位置をaddの分だけ加算する
 int RingReadPosAdd(int add)
 {
-  ring.read_pos = nextpos(ring.read_pos);// Next Posision
-  ring.len--;
+  ring.read_pos = nextpos(ring.read_pos,add);// Next Posision
+  ring.len = ring.len - add;
   return 1;
 }
 
