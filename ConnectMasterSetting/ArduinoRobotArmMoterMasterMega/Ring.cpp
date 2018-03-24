@@ -13,19 +13,23 @@
   }
 */
 
-void RingBuffer::RingPrint()
+void MyRingBuffer::RingPrint()
 {
   int ii;
   char printbuf[255];
   for (ii = 0; ii < RING_BUF ; ii++ ) {
     sprintf( printbuf, "%02x ", data[ii] );
-    Serial.print(printbuf);
+#ifdef DEBUG
+    DebugSerial.print(printbuf);
+#endif
   }
-  Serial.println("");
+#ifdef DEBUG
+  DebugSerial.println("");
+#endif
 }
 
 // 引数の配列を出力する（リングバッファ用）
-void RingBuffer::RingPrint2(byte *out, int locallen)
+void MyRingBuffer::RingPrint2(byte *out, int locallen)
 {
   int ii;
   int jj;
@@ -33,13 +37,17 @@ void RingBuffer::RingPrint2(byte *out, int locallen)
   char printbuf[255];
   for (ii = 0; ii < RING_BUF && ii < locallen ; ii++ ) {
     sprintf( printbuf, "%02x ", *(out + ii) );
-    Serial.print(printbuf);
+#ifdef DEBUG
+    DebugSerial.print(printbuf);
+#endif
   }
-  Serial.println("");
+#ifdef DEBUG
+  DebugSerial.println("");
+#endif
 }
 
 // 引数のoutにリングバッファから取り出した文字列を設定する
-int RingBuffer::RingGet(byte (&out)[RING_BUF], int maxlen)
+int MyRingBuffer::RingGet(byte (&out)[RING_BUF], int maxlen)
 {
   unsigned int ii;
   unsigned int jj = 0;
@@ -63,13 +71,13 @@ int RingBuffer::RingGet(byte (&out)[RING_BUF], int maxlen)
   return locallen;
 }
 
-int RingBuffer::RingSize()
+int MyRingBuffer::RingSize()
 {
   return m_len;
 }
 
 // リングバッファに引数のdataを一番後ろに設定する
-int RingBuffer::RingWrite(byte data)
+int MyRingBuffer::RingWrite(byte data)
 {
   *(write_pos) = data;
   write_pos = nextpos(write_pos) ;// Next Posision
@@ -78,13 +86,13 @@ int RingBuffer::RingWrite(byte data)
 }
 
 // リングバッファの読み込み位置をaddの分だけ加算する
-int RingBuffer::RingReadPosAdd(int add)
+int MyRingBuffer::RingReadPosAdd(int add)
 {
   read_pos = nextpos(read_pos);// Next Posision
   m_len--;
   return 1;
 }
-int RingBuffer::getCommand(byte *lbufferSerial, CommandHead *head, int headnum)
+int MyRingBuffer::getCommand(byte *lbufferSerial, CommandHead *head, int headnum)
 {
   int ii;
   unsigned short locallen = 0;

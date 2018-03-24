@@ -1,6 +1,8 @@
 #ifndef _SINGLETON_H
 #define _SINGLETON_H
 
+#pragma ones
+
 namespace tmlib {
 
 /**

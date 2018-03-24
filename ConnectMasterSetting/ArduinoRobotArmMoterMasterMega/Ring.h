@@ -7,10 +7,11 @@ extern "C" {
 }
 #include "Singleton.h"
 
+//#define DEBUG_COMMAND
 #define DebugSerial       Serial
 
 //############  RingBuffer   ############
-#define HEADER_LEN 5
+#define HEADER_LEN 6
 #define CRC_SIZE 2
 #define RING_BUF 256 // 2のべき乗である必要がある
 
@@ -23,11 +24,11 @@ typedef struct COMMAND_HEAD_t
   unsigned short len;
 } CommandHead;
 
-class RingBuffer
+class MyRingBuffer
 {
   public:
     // シングルトンのテンプレート引数に自身を指定したものだけに生成をゆるす
-    friend tmlib::SingletonHolder<RingBuffer>;
+    friend tmlib::SingletonHolder<MyRingBuffer>;
 
    void Init(void) {
       // 初期値を設定する
