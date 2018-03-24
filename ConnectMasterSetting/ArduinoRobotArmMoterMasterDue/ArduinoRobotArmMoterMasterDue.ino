@@ -36,7 +36,7 @@ static int16_t defMinPos[MOTER_NUM] = { 10,   200, 0    };
 int16_t gpos[MOTER_NUM] = {800, 800, 800 };
 int dir = 10;
 
-byte gPosSendBuff[10];
+byte gPosSendBuff[16];
 
 //############  One Run   ############
 unsigned long startMs;
@@ -80,7 +80,7 @@ int gindexsetting;
 
 CommandHead gComHead[CMD_NUM] = {
   { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
-  { 0x02, 0x01, 0x01, 0x0003}  // X or Y or Z POS
+  { 0x02, 0x01, 0x01, 0x0009}  // (X , Y , Z) POS
 };
 
 typedef struct XYZ_t
@@ -121,20 +121,43 @@ struct PosSenerTask : public EventTask
 {
   using EventTask::execute;
 
-  int MoveMoter( int index, int moterID, int16_t *movepos)
+  int MoveMoter( int *index, int indexsize)
   {
-    if ( *movepos > defMaxPos[index] ) {
-      DebugSerialPrintln(F("defMaxPos"));
-      *movepos = defMaxPos[index];
-    } else if ( *movepos < defMinPos[index] ) {
-      DebugSerialPrintln(F("defMinPos"));
-      *movepos = defMinPos[index];
+    int ii;
+    int bufii = 5;
+    int moterID;
+    int16_t movepos;
+    byte buf[10];
+
+    buf[0] = gComHead[1].main;
+    buf[1] = gComHead[1].sub;
+    buf[2] = gComHead[1].ver;
+    buf[3] = (gComHead[1].len) & 0xff;
+    buf[4] = (gComHead[1].len) >> 8;
+    //buf[5] = moterID;
+    //buf[6] = (*movepos) & 0xff;
+    //buf[7] = (*movepos) >> 8;
+
+
+    for ( ii = 0; ii < indexsize; ii++) {
+      moterID = gMoterID[ (index[ii]) ];
+      movepos = gpos[ (index[ii]) ];
+      if ( movepos > defMaxPos[(index[ii])] ) {
+        DebugSerialPrintln(F("defMaxPos"));
+        movepos = defMaxPos[(index[ii])];
+      } else if ( movepos < defMinPos[(index[ii])] ) {
+        DebugSerialPrintln(F("defMinPos"));
+        movepos = defMinPos[(index[ii])];
+      }
+      // Set goal position
+      DebugSerialPrint(F("moterID: "));
+      DebugSerialPrintln(moterID);
+      DebugSerialPrint("movepos:  ");
+      DebugSerialPrintln(movepos);
+      buf[bufii++] = moterID;
+      buf[bufii++] = movepos & 0xff;
+      buf[bufii++] = movepos >> 8;
     }
-    // Set goal position
-    DebugSerialPrint(F("moterID: "));
-    DebugSerialPrintln(moterID);
-    DebugSerialPrint("movepos:  ");
-    DebugSerialPrintln(*movepos);
 #if 0
     char buf[255];
     sprintf(buf, "%d%d", moterID, *movepos);
@@ -156,25 +179,14 @@ struct PosSenerTask : public EventTask
     }
 #endif
 
-    byte buf[10];
-
-    buf[0] = gComHead[1].main;
-    buf[1] = gComHead[1].sub;
-    buf[2] = gComHead[1].ver;
-    buf[3] = (gComHead[1].len) & 0xff;
-    buf[4] = (gComHead[1].len) >> 8;
-    buf[5] = moterID;
-    buf[6] = (*movepos) & 0xff;
-    buf[7] = (*movepos) >> 8;
-
     unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, 5 + gComHead[1].len);
-    buf[8] = (conf_def_crc & 0xff);
-    buf[9] = (conf_def_crc >> 8);
+    buf[bufii++] = (conf_def_crc & 0xff);
+    buf[bufii++] = (conf_def_crc >> 8);
 
-    memcpy( gPosSendBuff, buf, 10);
+    memcpy( gPosSendBuff, buf, bufii);
 
     if (POSSerial.availableForWrite()) {
-      POSSerial.write(buf, 10);
+      POSSerial.write(buf, bufii);
     }
     return 1;
   }
@@ -198,16 +210,6 @@ struct PosSenerTask : public EventTask
         } else {
           gpos[0] = gpos[0] + 1/*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.x - DEF_DELTA);
         }
-        MoveMoter( 0, gMoterID[0], &(gpos[0]));
-        DebugSerialPrint("gMoterID[0] = ");
-        DebugSerialPrintln(gpos[0]);
-        DebugSerialPrint("gxyz.pos.x = ");
-        DebugSerialPrintln(gxyz.pos.x);
-        DebugSerialPrint("gxyz.pos.y = ");
-        DebugSerialPrintln(gxyz.pos.y);
-        DebugSerialPrint("gxyz.pos.z = ");
-        DebugSerialPrintln(gxyz.pos.z);
-
       }
 
       if (movey > POS_RANGE1 || movey < POS_RANGE2 )
@@ -220,16 +222,6 @@ struct PosSenerTask : public EventTask
         } else {
           gpos[1] = gpos[1] - 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
         }
-        MoveMoter( 1, gMoterID[1], &(gpos[1]));
-        DebugSerialPrint("gMoterID[1] = ");
-        DebugSerialPrintln(gpos[1]);
-        DebugSerialPrint("gxyz.pos.x = ");
-        DebugSerialPrintln(gxyz.pos.x);
-        DebugSerialPrint("gxyz.pos.y = ");
-        DebugSerialPrintln(gxyz.pos.y);
-        DebugSerialPrint("gxyz.pos.z = ");
-        DebugSerialPrintln(gxyz.pos.z);
-
       }
       /*
         if( PS3.getAnalogHat(RightHatX) > 137 || PS3.getAnalogHat(RightHatX) < 117)
@@ -250,15 +242,13 @@ struct PosSenerTask : public EventTask
         } else {
           gpos[2] = gpos[2] - 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.z - DEF_DELTA);
         }
-        MoveMoter( 2, gMoterID[2], &(gpos[2]));
-        DebugSerialPrint("gMoterID[2] = ");
-        DebugSerialPrintln(gpos[2]);
-        DebugSerialPrint("gxyz.pos.x = ");
-        DebugSerialPrintln(gxyz.pos.x);
-        DebugSerialPrint("gxyz.pos.y = ");
-        DebugSerialPrintln(gxyz.pos.y);
-        DebugSerialPrint("gxyz.pos.z = ");
-        DebugSerialPrintln(gxyz.pos.z);
+      }
+      if ( (movex > POS_RANGE1 || movex < POS_RANGE2) ||
+           (movey > POS_RANGE1 || movey < POS_RANGE2) || 
+           ( movez > POS_RANGE1 || movez < POS_RANGE2) ) {
+        int index[3] = {0, 1, 2};
+        int indexsize = 3;
+        MoveMoter( index, indexsize);
       }
     } else if (PS3.PS3MoveConnected) { // One can only set the color of the bulb, set the rumble, set and get the bluetooth address and calibrate the magnetometer via USB
       DebugSerialPrintln("PS3MoveConnected");
@@ -362,7 +352,7 @@ void setup() {
 #endif
   POSSerial.begin(115200);// Connect MoterSlave
   SettingSerial.begin(115200);// Connect Setting
-    
+
   // シングルトンなRingBufferクラスを生成
   RingHolder::create();
   theRing.Init();
@@ -390,7 +380,7 @@ void setup() {
 
   evtManager.subscribe(Subscriber("event.PosSend", &PosSenerTask));
   Event poSsenderTsk = Event("event.PosSend");
-  evtManager.triggerInterval(TimedTask(120, poSsenderTsk));
+  evtManager.triggerInterval(TimedTask(50, poSsenderTsk));
 
   startMs  = millis();
 }

@@ -55,12 +55,14 @@ typedef struct Moter_t
 typedef struct ComPOS_t
 {
   CommandHead head;
-  MoterPOS moter;
+  MoterPOS moter1;
+  MoterPOS moter2;
+  MoterPOS moter3;
 } ComPOS;
 
 CommandHead gComHead[CMD_NUM] = {
   //  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
-  { 0x02, 0x01, 0x01, 0x0003}  // X or Y or Z POS
+  { 0x02, 0x01, 0x01, 0x0009}  // X or Y or Z POS
 };
 
 ComPOS gpos = { { 0x02, 0x01, 0x01, 0x0003}, { 2, 800} };
@@ -117,10 +119,9 @@ void getPos() {
     get_num = getCommand(bufferSerialSetting, gComHead, CMD_NUM);
     if ( 1 <= get_num ) {
       memcpy( &gpos, bufferSerialSetting, sizeof(ComPOS) );
-      MoveMoter( gpos.moter.moterID, gpos.moter.pos);
-      DebugSerialPrint(gpos.moter.moterID);
-      DebugSerialPrint("   ");
-      DebugSerialPrintln(gpos.moter.pos);
+      MoveMoter( gpos.moter1.moterID, gpos.moter1.pos);
+      MoveMoter( gpos.moter2.moterID, gpos.moter2.pos);
+      MoveMoter( gpos.moter3.moterID, gpos.moter3.pos);
     } else if ( -1 == get_num ) {
       MoterPOSSerial.println("F");
     }
