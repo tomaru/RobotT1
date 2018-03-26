@@ -11,18 +11,26 @@ extern "C" {
 #define CONFIG_NUM 3
 #define USE 1
 #define NO_USE 0
-#define VER 3
+#define VER 5
 
 typedef struct config_t
 {
   int ver;
+  unsigned short x;
+  unsigned short y;
+  unsigned short z;
   int delta_x;
   int delta_y;
   int delta_z;
+  int speed_x;
+  int speed_y;
+  int speed_z;
+  int ltime;
+  int mode;
   unsigned short crc;
 } configuration;
 
-configuration conf_def = {VER, 100, 100, 100, 0x0000};
+configuration conf_def = {VER, 500, 500, 500, 110, 110, 110, 50, 50, 50, 120, 1, 0x0000};
 
 int check_eeprom_crc(configuration conf)
 {
@@ -42,9 +50,9 @@ int write_config(configuration &conf)
   unsigned short calc_crc = crc16(0, (unsigned char*)&conf, sizeof(configuration) - 2);
   conf.crc = calc_crc;
 #ifdef DEBUG
-    Serial.println("==============");
-    Serial.print("conf.crc  ");
-    Serial.println(conf.crc);
+  Serial.println("==============");
+  Serial.print("conf.crc  ");
+  Serial.println(conf.crc);
 #endif
   for (ii = 0; ii < CONFIG_NUM; ii++) {
     // eeprom_addressは0, (length/CONFIG_NUM)*1, (N/CONFIG_NUM)*2, (N/CONFIG_NUM)*3, ...
@@ -55,7 +63,7 @@ int write_config(configuration &conf)
     Serial.println(eeprom_address);
 #endif
     EEPROM_writeAnything(eeprom_address, conf);
-    
+
   }
   return 1;
 }
@@ -75,7 +83,7 @@ configuration read_config()
 
   // 初期値のCRC計算
   conf_def.crc = conf_def_crc;
-  
+
   // EEPROMからの読み出しとチェック
   for (ii = 0; ii < CONFIG_NUM; ii++) {
     // eeprom_addressは0, (length/CONFIG_NUM)*1, (N/CONFIG_NUM)*2, (N/CONFIG_NUM)*3, ...
@@ -116,16 +124,17 @@ configuration read_config()
   // EEPROMのデータがすべて不正ならば引数のデフォルト設定とする
 #ifdef DEBUG
   Serial.println("====1 conf_def=======");
-    Serial.println(conf_def.delta_x);
-    Serial.println(conf_def.delta_y);
-    Serial.println(conf_def.delta_z);
-    Serial.println(conf_def.crc);
+  Serial.println(conf_def.delta_x);
+  Serial.println(conf_def.delta_y);
+  Serial.println(conf_def.delta_z);
+  Serial.println(conf_def.crc);
   Serial.println("====0 conf=======");
-    Serial.println(conf.delta_x);
-    Serial.println(conf.delta_y);
-    Serial.println(conf.delta_z);
-    Serial.println(conf.crc);
-    Serial.println("==============");
+  Serial.println(conf.delta_x);
+  Serial.println(conf.delta_y);
+  Serial.println(conf.delta_z);
+  Serial.println(conf.crc);
+  Serial.println("====== use_conf_def_flg ======");
+  Serial.println(use_conf_def_flg);
 #endif
   for (ii = 0; ii < CONFIG_NUM; ii++) {
     eeprom_address = (EEPROM.length() / CONFIG_NUM) * ii;
@@ -140,6 +149,7 @@ configuration read_config()
 #endif
       if ( use_conf_def_flg == USE ) {
         EEPROM_writeAnything(eeprom_address, conf_def);
+        conf = conf_def;
       } else {
         EEPROM_writeAnything(eeprom_address, conf);
       }

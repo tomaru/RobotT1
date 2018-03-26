@@ -79,16 +79,9 @@ int gindexsetting;
 #define CMD_NUM 2
 
 CommandHead gComHead[CMD_NUM] = {
-  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
+  { 0x01, 0x01, 0x01, 0x000e}, // XYZ DelataCommand
   { 0x02, 0x01, 0x01, 0x0009}  // (X , Y , Z) POS
 };
-
-typedef struct XYZ_t
-{
-  byte x;
-  byte y;
-  byte z;
-} XYZ;
 
 typedef struct Moter_t
 {
@@ -99,11 +92,21 @@ typedef struct Moter_t
 typedef struct ComPOS_t
 {
   CommandHead head;
-  XYZ pos;
+  unsigned short x;
+  unsigned short y;
+  unsigned short z;
+  byte delta_x;
+  byte delta_y;
+  byte delta_z;
+  byte speed_x;
+  byte speed_y;
+  byte speed_z;
+  byte ltime;
+  byte mode;
 } ComXYZ;
 
-ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
-ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
+ComXYZ gxyz     = { { 0x01, 0x01, 0x01, 0x000e}, 500,500,500,110, 110, 110, 50,50,50,120,0 };
+ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x000e}, 500,500,500,110, 110, 110, 50,50,50,120,0 };
 
 // SingletonHolderを使う際のお決まりtypedef
 typedef tmlib::SingletonHolder<MyRingBuffer> RingHolder;
@@ -206,9 +209,9 @@ struct PosSenerTask : public EventTask
         if ( movex > POS_RANGE1 ) {
           // 1はゼロ除算対策
           // モーターの配置の都合上、-1をかけて反対にする
-          gpos[0] = gpos[0] - 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ - (gxyz.pos.x - DEF_DELTA);
+          gpos[0] = gpos[0] - 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ - (gxyz.delta_x - DEF_DELTA);
         } else {
-          gpos[0] = gpos[0] + 1/*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.x - DEF_DELTA);
+          gpos[0] = gpos[0] + 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_x - DEF_DELTA);
         }
       }
 
@@ -218,9 +221,9 @@ struct PosSenerTask : public EventTask
         DebugSerialPrint(movey);
         if ( movey > POS_RANGE1 ) {
           // 1はゼロ除算対策
-          gpos[1] = gpos[1] + 1/*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.y - DEF_DELTA);
+          gpos[1] = gpos[1] + 1 /*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_y - DEF_DELTA);
         } else {
-          gpos[1] = gpos[1] - 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
+          gpos[1] = gpos[1] - 1 /*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.delta_y - DEF_DELTA);
         }
       }
       /*
@@ -238,13 +241,13 @@ struct PosSenerTask : public EventTask
 
         if ( movez > POS_RANGE1 ) {
           // 1はゼロ除算対策
-          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.z - DEF_DELTA);
+          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_z - DEF_DELTA);
         } else {
-          gpos[2] = gpos[2] - 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.z - DEF_DELTA);
+          gpos[2] = gpos[2] - 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.delta_z - DEF_DELTA);
         }
       }
       if ( (movex > POS_RANGE1 || movex < POS_RANGE2) ||
-           (movey > POS_RANGE1 || movey < POS_RANGE2) || 
+           (movey > POS_RANGE1 || movey < POS_RANGE2) ||
            ( movez > POS_RANGE1 || movez < POS_RANGE2) ) {
         int index[3] = {0, 1, 2};
         int indexsize = 3;
@@ -295,7 +298,7 @@ struct SettingLisnerTask : public EventTask
 
   void execute(Event evt) {
     String extra = evt.extra;
-#ifdef DEBUG_COMMAND
+#ifdef DEBUG
     DebugSerial.println("SettingLisnerTask execute ");
 #endif
     if (extra == "Stop")
@@ -358,10 +361,10 @@ void setup() {
   theRing.Init();
   gxyz = gxyz_def;
 
+  gpos[0] = gxyz_def.x;
+  gpos[1] = gxyz_def.y;
+  gpos[2] = gxyz_def.z;
 
-  gxyz.pos.x = 100;
-  gxyz.pos.y = 100;
-  gxyz.pos.z = 100;
 #ifdef USE_PS3
   if (Usb.Init() == -1) {
     DebugSerialPrintln("OSC did not start");
@@ -380,7 +383,7 @@ void setup() {
 
   evtManager.subscribe(Subscriber("event.PosSend", &PosSenerTask));
   Event poSsenderTsk = Event("event.PosSend");
-  evtManager.triggerInterval(TimedTask(50, poSsenderTsk));
+  evtManager.triggerInterval(TimedTask(70, poSsenderTsk));
 
   startMs  = millis();
 }

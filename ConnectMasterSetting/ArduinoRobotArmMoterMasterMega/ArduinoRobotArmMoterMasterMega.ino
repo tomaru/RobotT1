@@ -6,7 +6,7 @@
 //  1.select [SOFT]
 //  2.compile & download
 
-//#define DEBUG
+#define DEBUG
 //#define DEBUG_SETTING
 //#define DEBUG_COMMAND
 
@@ -84,16 +84,9 @@ configuration conf_ram = conf_def;
 #define CMD_NUM 2
 
 CommandHead gComHead[CMD_NUM] = {
-  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
+  { 0x01, 0x01, 0x01, 0x000e}, // XYZ DelataCommand
   { 0x02, 0x01, 0x01, 0x0009}  // (X , Y , Z) POS
 };
-
-typedef struct XYZ_t
-{
-  byte x;
-  byte y;
-  byte z;
-} XYZ;
 
 typedef struct Moter_t
 {
@@ -104,11 +97,21 @@ typedef struct Moter_t
 typedef struct ComPOS_t
 {
   CommandHead head;
-  XYZ pos;
+  unsigned short x;
+  unsigned short y;
+  unsigned short z;
+  byte delta_x;
+  byte delta_y;
+  byte delta_z;
+  byte speed_x;
+  byte speed_y;
+  byte speed_z;
+  byte ltime;
+  byte mode;
 } ComXYZ;
 
-ComXYZ gxyz = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
-ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x0003}, { 100, 100, 100} };
+ComXYZ gxyz     = { { 0x01, 0x01, 0x01, 0x000b}, 500,500,500,110, 110, 110, 50,50,50,120,0 };
+ComXYZ gxyz_def = { { 0x01, 0x01, 0x01, 0x000b}, 500,500,500,110, 110, 110, 50,50,50,120,0 };
 
 // SingletonHolderを使う際のお決まりtypedef
 typedef tmlib::SingletonHolder<MyRingBuffer> RingHolder;
@@ -211,9 +214,9 @@ struct PosSenerTask : public EventTask
         if ( movex > POS_RANGE1 ) {
           // 1はゼロ除算対策
           // モーターの配置の都合上、-1をかけて反対にする
-          gpos[0] = gpos[0] - 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ - (gxyz.pos.x - DEF_DELTA);
+          gpos[0] = gpos[0] - 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ - (gxyz.delta_x - DEF_DELTA);
         } else {
-          gpos[0] = gpos[0] + 1/*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.x - DEF_DELTA);
+          gpos[0] = gpos[0] + 1 /*+  -1 * (movex - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_x - DEF_DELTA);
         }
       }
 
@@ -223,9 +226,9 @@ struct PosSenerTask : public EventTask
         DebugSerialPrint(movey);
         if ( movey > POS_RANGE1 ) {
           // 1はゼロ除算対策
-          gpos[1] = gpos[1] + 1/*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.y - DEF_DELTA);
+          gpos[1] = gpos[1] + 1 /*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_y - DEF_DELTA);
         } else {
-          gpos[1] = gpos[1] - 1/*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.y - DEF_DELTA);
+          gpos[1] = gpos[1] - 1 /*+ (movey - POS_RANGE2 + 1) / 25*/ - (gxyz.delta_y - DEF_DELTA);
         }
       }
       /*
@@ -243,13 +246,13 @@ struct PosSenerTask : public EventTask
 
         if ( movez > POS_RANGE1 ) {
           // 1はゼロ除算対策
-          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE1 + 1) / 25*/ + (gxyz.pos.z - DEF_DELTA);
+          gpos[2] = gpos[2] + 1/*+ (movez - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_z - DEF_DELTA);
         } else {
-          gpos[2] = gpos[2] - 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.pos.z - DEF_DELTA);
+          gpos[2] = gpos[2] - 1/*+ (movez - POS_RANGE2 + 1) / 25*/ - (gxyz.delta_z - DEF_DELTA);
         }
       }
       if ( (movex > POS_RANGE1 || movex < POS_RANGE2) ||
-           (movey > POS_RANGE1 || movey < POS_RANGE2) || 
+           (movey > POS_RANGE1 || movey < POS_RANGE2) ||
            ( movez > POS_RANGE1 || movez < POS_RANGE2) ) {
         int index[3] = {0, 1, 2};
         int indexsize = 3;
@@ -300,7 +303,7 @@ struct SettingLisnerTask : public EventTask
 
   void execute(Event evt) {
     String extra = evt.extra;
-#ifdef DEBUG_COMMAND
+#ifdef DEBUG
     DebugSerial.println("SettingLisnerTask execute ");
 #endif
     if (extra == "Stop")
@@ -314,9 +317,27 @@ struct SettingLisnerTask : public EventTask
         get_num = theRing.getCommand(bufferSerialSetting, gComHead, CMD_NUM);
         if ( 1 <= get_num ) {
           gxyz = *(ComXYZ*)(bufferSerialSetting);
-          conf_ram.delta_x = gxyz.pos.x;
-          conf_ram.delta_y = gxyz.pos.y;
-          conf_ram.delta_z = gxyz.pos.z;
+          conf_ram.x = gxyz.x;
+          conf_ram.y = gxyz.y;
+          conf_ram.z = gxyz.z;
+#ifdef DEBUG
+    DebugSerial.print("conf_ram.x  "); DebugSerial.println(conf_ram.x);
+    DebugSerial.print("conf_ram.y  "); DebugSerial.println(conf_ram.y);
+    DebugSerial.print("conf_ram.z  "); DebugSerial.println(conf_ram.z);
+#endif
+          conf_ram.delta_x = gxyz.delta_x;
+          conf_ram.delta_y = gxyz.delta_y;
+          conf_ram.delta_z = gxyz.delta_z;
+#ifdef DEBUG
+    DebugSerial.print("conf_ram.delta_x  "); DebugSerial.println(conf_ram.delta_x);
+    DebugSerial.print("conf_ram.delta_y  "); DebugSerial.println(conf_ram.delta_y);
+    DebugSerial.print("conf_ram.delta_z  "); DebugSerial.println(conf_ram.delta_z);
+#endif
+          conf_ram.speed_x = gxyz.speed_x;
+          conf_ram.speed_y = gxyz.speed_y;
+          conf_ram.speed_z = gxyz.speed_z;
+          conf_ram.ltime = gxyz.ltime;
+          conf_ram.mode = gxyz.mode;
           write_config(conf_ram);
           KillFlg = 1;
         } else if ( -1 == get_num ) {
@@ -367,18 +388,33 @@ void setup() {
   gxyz = gxyz_def;
 
   conf_ram = read_config();
-  gxyz.pos.x = conf_ram.delta_x;
-  gxyz.pos.y = conf_ram.delta_y;
-  gxyz.pos.z = conf_ram.delta_z;
+  gxyz.x = conf_ram.x;
+  gxyz.y = conf_ram.y;
+  gxyz.z = conf_ram.z;
+  gxyz.delta_x = conf_ram.delta_x;
+  gxyz.delta_y = conf_ram.delta_y;
+  gxyz.delta_z = conf_ram.delta_z;
+  gxyz.speed_x = conf_ram.delta_x;
+  gxyz.speed_y = conf_ram.speed_y;
+  gxyz.speed_z = conf_ram.speed_z;
+  gxyz.ltime = conf_ram.ltime;
+  gxyz.mode = conf_ram.mode;
 
 #ifdef DEBUG
   DebugSerial.println("=======CONFIG GET RESULT START =======");
+  DebugSerial.println(conf_ram.x);
+  DebugSerial.println(conf_ram.y);
+  DebugSerial.println(conf_ram.z);
   DebugSerial.println(conf_ram.delta_x);
   DebugSerial.println(conf_ram.delta_y);
   DebugSerial.println(conf_ram.delta_z);
   DebugSerial.println(conf_ram.crc);
   DebugSerial.println("=======GET RESULT END=======");
 #endif
+  gpos[0] = gxyz.x;
+  gpos[1] = gxyz.y;
+  gpos[2] = gxyz.z;
+
 #ifdef USE_PS3
   if (Usb.Init() == -1) {
     DebugSerialPrintln("OSC did not start");
@@ -398,7 +434,7 @@ void setup() {
 
   evtManager.subscribe(Subscriber("event.PosSend", &PosSenerTask));
   Event poSsenderTsk = Event("event.PosSend");
-  evtManager.triggerInterval(TimedTask(120, poSsenderTsk));
+  evtManager.triggerInterval(TimedTask(gxyz.ltime, poSsenderTsk));
 
   startMs  = millis();
 }

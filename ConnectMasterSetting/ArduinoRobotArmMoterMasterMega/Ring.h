@@ -22,6 +22,7 @@ typedef struct COMMAND_HEAD_t
   unsigned char sub;
   unsigned char ver;
   unsigned short len;
+  byte dummy;
 } CommandHead;
 
 class MyRingBuffer
