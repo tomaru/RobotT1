@@ -22,9 +22,9 @@ typedef struct config_t
   int delta_x;
   int delta_y;
   int delta_z;
-  int speed_x;
-  int speed_y;
-  int speed_z;
+  unsigned short speed_x;
+  unsigned short speed_y;
+  unsigned short speed_z;
   int ltime;
   int mode;
   unsigned short crc;

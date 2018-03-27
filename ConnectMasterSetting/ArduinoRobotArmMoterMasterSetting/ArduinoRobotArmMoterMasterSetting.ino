@@ -30,7 +30,7 @@ typedef struct COMMAND_HEAD_t
 } CommandHead;
 
 static const CommandHead gcomhead[1] = {
-  { 0x01, 0x01, 0x01, 0x000e}
+  { 0x01, 0x01, 0x01, 0x0011}
 };
 
 //############  LCD   ############
@@ -136,7 +136,7 @@ struct SendTask : public EventTask
 
   void execute(Event evt)
   {
-    byte buf[30];
+    byte buf[33];
     int ii=0;
     buf[ii++] = gcomhead[0].main;
     buf[ii++] = gcomhead[0].sub;
@@ -153,9 +153,12 @@ struct SendTask : public EventTask
     buf[ii++] = conf_ram.delta_x;
     buf[ii++] = conf_ram.delta_y;
     buf[ii++] = conf_ram.delta_z;
-    buf[ii++] = conf_ram.speed_x;
-    buf[ii++] = conf_ram.speed_y;
-    buf[ii++] = conf_ram.speed_z;
+    buf[ii++] = conf_ram.speed_x & 0xff;
+    buf[ii++] = conf_ram.speed_x >> 8;
+    buf[ii++] = conf_ram.speed_y & 0xff;
+    buf[ii++] = conf_ram.speed_y >> 8;
+    buf[ii++] = conf_ram.speed_z & 0xff;
+    buf[ii++] = conf_ram.speed_z >> 8;
     buf[ii++] = conf_ram.ltime;
     buf[ii++] = conf_ram.mode;
 
@@ -266,21 +269,21 @@ int mnt_delta_z(int up_down)
 
 int mnt_speed_x(int up_down)
 {
-  conf_ram.speed_x = conf_ram.speed_x + up_down;
+  conf_ram.speed_x = conf_ram.speed_x + up_down*100;
   write_config(conf_ram);
   return conf_ram.speed_x;
 }
 
 int mnt_speed_y(int up_down)
 {
-  conf_ram.speed_y = conf_ram.speed_y + up_down;
+  conf_ram.speed_y = conf_ram.speed_y + up_down*100;
   write_config(conf_ram);
   return conf_ram.speed_y;
 }
 
 int mnt_speed_z(int up_down)
 {
-  conf_ram.speed_z = conf_ram.speed_z + up_down;
+  conf_ram.speed_z = conf_ram.speed_z + up_down*100;
   write_config(conf_ram);
   return conf_ram.speed_z;
 }

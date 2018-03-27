@@ -44,13 +44,19 @@ static int16_t defMinPos[MOTER_NUM] = { 100, 200, 50  };
 DXLIB dxif (true); // select software serial
 
 //############  MoterMasterCommand   ############
-#define CMD_NUM 1
+#define CMD_NUM 2
 
 typedef struct Moter_t
 {
   byte moterID;
   int16_t pos;
 } MoterPOS;
+
+typedef struct Speed_t
+{
+  byte moterID;
+  int16_t  speed;
+} MoterSpeed;
 
 typedef struct ComPOS_t
 {
@@ -60,12 +66,22 @@ typedef struct ComPOS_t
   MoterPOS moter3;
 } ComPOS;
 
+typedef struct ComSpeed_t
+{
+  CommandHead head;
+  MoterSpeed moter1;
+  MoterSpeed moter2;
+  MoterSpeed moter3;
+} ComSpeed;
+
 CommandHead gComHead[CMD_NUM] = {
   //  { 0x01, 0x01, 0x01, 0x0003}, // XYZ DelataCommand
-  { 0x02, 0x01, 0x01, 0x0009}  // X or Y or Z POS
+  { 0x02, 0x01, 0x01, 0x0009},  // X or Y or Z POS
+  { 0x02, 0x02, 0x01, 0x0009}  // XYZ SpeedCommand
 };
 
-ComPOS gpos = { { 0x02, 0x01, 0x01, 0x0003}, { 2, 800} };
+ComPOS gpos = { { 0x02, 0x01, 0x01, 0x0009}, { 1, 800}, { 2, 800}, { 3, 800} };
+ComSpeed gspeed = { { 0x02, 0x02, 0x01, 0x0006}, { 1, 800}, { 2, 800}, { 3, 800} };
 
 void MoterPOSSerialEvent() {
   byte ch;
@@ -88,18 +104,31 @@ int MoveMoter( int moterID, int16_t movepos)
   }
   if ( ii != (sizeof(gMoterID) / sizeof(gMoterID[0]))) {
     if ( movepos > defMaxPos[ii] ) {
+#ifdef DEBUG_MAXMIN
       DebugSerialPrintln(F("defMaxPos"));
+#endif
       movepos = defMaxPos[ii];
     } else if ( movepos < defMinPos[ii] ) {
+#ifdef DEBUG_MAXMIN
       DebugSerialPrintln(F("defMinPos"));
+#endif
       movepos = defMinPos[ii];
     }
   }
   dxif.WriteWordData (moterID, 30, movepos, NULL);
-
   DebugSerialPrint(moterID);
   DebugSerialPrint("   ");
   DebugSerialPrintln(movepos);
+
+  return 1;
+}
+int SpeedMoter( int moterID,  int16_t  speed)
+{
+  dxif.WriteWordData (moterID, 32, speed, NULL);
+  DebugSerialPrint("moter   ");
+  DebugSerialPrintln(moterID);
+  DebugSerialPrint("speed   ");
+  DebugSerialPrintln(speed);
 
   return 1;
 }
@@ -118,10 +147,20 @@ void getPos() {
   do {
     get_num = getCommand(bufferSerialSetting, gComHead, CMD_NUM);
     if ( 1 <= get_num ) {
-      memcpy( &gpos, bufferSerialSetting, sizeof(ComPOS) );
-      MoveMoter( gpos.moter1.moterID, gpos.moter1.pos);
-      MoveMoter( gpos.moter2.moterID, gpos.moter2.pos);
-      MoveMoter( gpos.moter3.moterID, gpos.moter3.pos);
+      switch (get_num) {
+        case 1:
+          memcpy( &gpos, bufferSerialSetting, sizeof(ComPOS) );
+          MoveMoter( gpos.moter1.moterID, gpos.moter1.pos);
+          MoveMoter( gpos.moter2.moterID, gpos.moter2.pos);
+          MoveMoter( gpos.moter3.moterID, gpos.moter3.pos);
+          break;
+        case 2:
+          memcpy( &gspeed, bufferSerialSetting, sizeof(ComPOS) );
+          SpeedMoter( gspeed.moter1.moterID, gspeed.moter1.speed);
+          SpeedMoter( gspeed.moter2.moterID, gspeed.moter2.speed);
+          SpeedMoter( gspeed.moter3.moterID, gspeed.moter3.speed);
+          break;
+      }
     } else if ( -1 == get_num ) {
       MoterPOSSerial.println("F");
     }

@@ -116,7 +116,7 @@ int getCommand(byte *lbufferSerial, CommandHead *head, int cmd_num)
 #endif
       // 次の位置に更新
       RingReadPosAdd((HEADER_LEN + len + CRC_SIZE));
-      return (HEADER_LEN + len + CRC_SIZE);
+      return (ii+1);
     } else {
       // 電文の取得に失敗したので
       // 次の位置に更新

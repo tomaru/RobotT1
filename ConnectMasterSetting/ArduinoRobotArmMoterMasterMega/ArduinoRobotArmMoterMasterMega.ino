@@ -6,7 +6,7 @@
 //  1.select [SOFT]
 //  2.compile & download
 
-#define DEBUG
+//#define DEBUG
 //#define DEBUG_SETTING
 //#define DEBUG_COMMAND
 
@@ -33,8 +33,8 @@ static int gMoterID[MOTER_NUM] = { 4, 3, 2};
 
 int16_t gMaxPos[MOTER_NUM];
 int16_t gMinPos[MOTER_NUM];
-static int16_t defMaxPos[MOTER_NUM] = { 1000, 800, 1010 };//  0～1023
-static int16_t defMinPos[MOTER_NUM] = { 10,   200, 0    };
+static int16_t defMaxPos[MOTER_NUM] = { 1000, 800, 1000 };//  0～1023
+static int16_t defMinPos[MOTER_NUM] = { 10,   200, 10    };
 int16_t gpos[MOTER_NUM] = {800, 800, 800 };
 int dir = 10;
 
@@ -81,13 +81,18 @@ configuration conf_ram = conf_def;
 #define POS_RANGE2 117
 
 //############  MoterMasterCommand   ############
-#define CMD_NUM 2
+#define CMD_NUM 1
 
 CommandHead gComHead[CMD_NUM] = {
-  { 0x01, 0x01, 0x01, 0x000e}, // XYZ DelataCommand
-  { 0x02, 0x01, 0x01, 0x0009}  // (X , Y , Z) POS
+  { 0x01, 0x01, 0x01, 0x0011}  // Setting
 };
 
+CommandHead com_xyz = 
+  { 0x02, 0x01, 0x01, 0x0009}; // (X , Y , Z) POS
+
+CommandHead com_speedxyz = 
+  { 0x02, 0x02, 0x01, 0x0009};  // XYZ SpeedCommand
+ 
 typedef struct Moter_t
 {
   byte moterID;
@@ -103,9 +108,9 @@ typedef struct ComPOS_t
   byte delta_x;
   byte delta_y;
   byte delta_z;
-  byte speed_x;
-  byte speed_y;
-  byte speed_z;
+  unsigned short speed_x;
+  unsigned short speed_y;
+  unsigned short speed_z;
   byte ltime;
   byte mode;
 } ComXYZ;
@@ -124,6 +129,47 @@ int gSettingTaskID;
 int KillFlg = 0;
 int Onekill = 0;
 
+int SendSettingSpeed()
+{
+    int bufii = 5;
+    
+    byte buf[5 + com_speedxyz.len + 2];
+    buf[0] = com_speedxyz.main;
+    buf[1] = com_speedxyz.sub;
+    buf[2] = com_speedxyz.ver;
+    buf[3] = (com_speedxyz.len) & 0xff;
+    buf[4] = (com_speedxyz.len) >> 8;
+    buf[bufii++] = gMoterID[2];
+    buf[bufii++] = gxyz.speed_x & 0xff;
+    buf[bufii++] = gxyz.speed_x >> 8;
+    buf[bufii++] = gMoterID[1];
+    buf[bufii++] = gxyz.speed_y & 0xff;
+    buf[bufii++] = gxyz.speed_y >> 8;
+    buf[bufii++] = gMoterID[0];
+    buf[bufii++] = gxyz.speed_z & 0xff;
+    buf[bufii++] = gxyz.speed_z >> 8;
+    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, 5 + com_speedxyz.len);
+    buf[bufii++] = (conf_def_crc & 0xff);
+    buf[bufii++] = (conf_def_crc >> 8);
+    
+    if (POSSerial.availableForWrite()) {
+      POSSerial.write(buf, bufii);
+    }
+      DebugSerialPrint(F("moterID: "));
+      DebugSerialPrint(gMoterID[0]);
+      DebugSerialPrint(F("   Speed: "));
+      DebugSerialPrintln(gxyz.speed_x);
+      DebugSerialPrint(F("moterID: "));
+      DebugSerialPrint(gMoterID[1]);
+      DebugSerialPrint(F("   Speed: "));
+      DebugSerialPrintln(gxyz.speed_y);
+      DebugSerialPrint(F("moterID: "));
+      DebugSerialPrint(gMoterID[2]);
+      DebugSerialPrint(F("   Speed: "));
+      DebugSerialPrintln(gxyz.speed_z);
+    return 1;
+    
+}
 //############  EventManager   SettingLisnerTask   ############
 struct PosSenerTask : public EventTask
 {
@@ -137,11 +183,11 @@ struct PosSenerTask : public EventTask
     int16_t movepos;
     byte buf[10];
 
-    buf[0] = gComHead[1].main;
-    buf[1] = gComHead[1].sub;
-    buf[2] = gComHead[1].ver;
-    buf[3] = (gComHead[1].len) & 0xff;
-    buf[4] = (gComHead[1].len) >> 8;
+    buf[0] = com_xyz.main;
+    buf[1] = com_xyz.sub;
+    buf[2] = com_xyz.ver;
+    buf[3] = (com_xyz.len) & 0xff;
+    buf[4] = (com_xyz.len) >> 8;
     //buf[5] = moterID;
     //buf[6] = (*movepos) & 0xff;
     //buf[7] = (*movepos) >> 8;
@@ -158,10 +204,12 @@ struct PosSenerTask : public EventTask
         movepos = defMinPos[(index[ii])];
       }
       // Set goal position
+#ifdef DEBUG_POS
       DebugSerialPrint(F("moterID: "));
       DebugSerialPrintln(moterID);
       DebugSerialPrint("movepos:  ");
       DebugSerialPrintln(movepos);
+#endif
       buf[bufii++] = moterID;
       buf[bufii++] = movepos & 0xff;
       buf[bufii++] = movepos >> 8;
@@ -187,7 +235,7 @@ struct PosSenerTask : public EventTask
     }
 #endif
 
-    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, 5 + gComHead[1].len);
+    unsigned short conf_def_crc = crc16(0, (unsigned char*)buf, 5 + com_xyz.len);
     buf[bufii++] = (conf_def_crc & 0xff);
     buf[bufii++] = (conf_def_crc >> 8);
 
@@ -208,8 +256,10 @@ struct PosSenerTask : public EventTask
       if (movex > POS_RANGE1 || movex < POS_RANGE2)
       {
 
+#ifdef DEBUG_POS
         DebugSerialPrint(F("LeftHatX: "));
         DebugSerialPrint(LeftHatX);
+#endif
 
         if ( movex > POS_RANGE1 ) {
           // 1はゼロ除算対策
@@ -222,8 +272,10 @@ struct PosSenerTask : public EventTask
 
       if (movey > POS_RANGE1 || movey < POS_RANGE2 )
       {
+#ifdef DEBUG_POS
         DebugSerialPrint(F("\tLeftHatY: "));
         DebugSerialPrint(movey);
+#endif
         if ( movey > POS_RANGE1 ) {
           // 1はゼロ除算対策
           gpos[1] = gpos[1] + 1 /*+ (movey - POS_RANGE1 + 1) / 25*/ + (gxyz.delta_y - DEF_DELTA);
@@ -241,8 +293,10 @@ struct PosSenerTask : public EventTask
 
       if ( movez > POS_RANGE1 || movez < POS_RANGE2)
       {
+#ifdef DEBUG_POS
         DebugSerialPrint(F("\tRightHatY: "));
         DebugSerialPrintln(movez);
+#endif
 
         if ( movez > POS_RANGE1 ) {
           // 1はゼロ除算対策
@@ -336,6 +390,11 @@ struct SettingLisnerTask : public EventTask
           conf_ram.speed_x = gxyz.speed_x;
           conf_ram.speed_y = gxyz.speed_y;
           conf_ram.speed_z = gxyz.speed_z;
+#ifdef DEBUG
+    DebugSerial.print("gxyz.speed_x  "); DebugSerial.println(gxyz.speed_x);
+    DebugSerial.print("gxyz.speed_y  "); DebugSerial.println(gxyz.speed_y);
+    DebugSerial.print("gxyz.speed_z  "); DebugSerial.println(gxyz.speed_z);
+#endif
           conf_ram.ltime = gxyz.ltime;
           conf_ram.mode = gxyz.mode;
           write_config(conf_ram);
@@ -394,11 +453,13 @@ void setup() {
   gxyz.delta_x = conf_ram.delta_x;
   gxyz.delta_y = conf_ram.delta_y;
   gxyz.delta_z = conf_ram.delta_z;
-  gxyz.speed_x = conf_ram.delta_x;
+  gxyz.speed_x = conf_ram.speed_x;
   gxyz.speed_y = conf_ram.speed_y;
   gxyz.speed_z = conf_ram.speed_z;
   gxyz.ltime = conf_ram.ltime;
   gxyz.mode = conf_ram.mode;
+    
+  SendSettingSpeed();
 
 #ifdef DEBUG
   DebugSerial.println("=======CONFIG GET RESULT START =======");
